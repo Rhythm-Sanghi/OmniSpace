@@ -46,6 +46,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop
+          tauriScript: npm run tauri
           tagName: ${{ github.ref_name }}
           releaseName: 'OmniSpace v__VERSION__'
           releaseBody: 'OmniSpace cross-device workspace manager production release.'
