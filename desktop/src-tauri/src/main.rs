@@ -128,7 +128,8 @@ use windows_sys::Win32::System::Com::{CoInitialize, CoCreateInstance};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Media::Audio::{
   IMMDeviceEnumerator, IMMDevice, IAudioClient, WAVEFORMATEX,
-  IAudioCaptureClient, WAVEFORMATEXTENSIBLE
+  IAudioCaptureClient, WAVEFORMATEXTENSIBLE,
+  IMMDeviceEnumerator_Vtbl, IMMDevice_Vtbl, IAudioClient_Vtbl, IAudioCaptureClient_Vtbl
 };
 
 #[cfg(target_os = "windows")]
@@ -2680,56 +2681,66 @@ fn run_wasapi_loopback() {
     use std::time::Duration;
     CoInitialize(std::ptr::null());
     
-    let mut enumerator: *mut IMMDeviceEnumerator = std::ptr::null_mut();
+    let mut enumerator: IMMDeviceEnumerator = std::ptr::null_mut();
     if unsafe {
       CoCreateInstance(
         &CLSID_MMDeviceEnumerator,
         std::ptr::null_mut(),
         CLSCTX_ALL,
         &IID_IMMDeviceEnumerator,
-        &mut enumerator as *mut *mut IMMDeviceEnumerator as *mut *mut std::ffi::c_void
+        &mut enumerator as *mut IMMDeviceEnumerator as *mut *mut std::ffi::c_void
       )
     } < 0 {
       return;
     }
 
-    let mut device: *mut IMMDevice = std::ptr::null_mut();
-    if unsafe { ((*(*enumerator).lpVtbl).GetDefaultAudioEndpoint)(enumerator, eRender, eConsole, &mut device) } < 0 {
-      unsafe { ((*(*enumerator).lpVtbl).Release)(enumerator) };
+    let mut device: IMMDevice = std::ptr::null_mut();
+    let vtbl = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
+    if unsafe { ((*vtbl).GetDefaultAudioEndpoint)(enumerator, eRender, eConsole, &mut device) } < 0 {
+      let vtbl = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
+      unsafe { ((*vtbl).Release)(enumerator) };
       return;
     }
 
-    let mut audio_client: *mut IAudioClient = std::ptr::null_mut();
+    let mut audio_client: IAudioClient = std::ptr::null_mut();
+    let vtbl = *(device as *mut *const IMMDevice_Vtbl);
     if unsafe {
-      ((*(*device).lpVtbl).Activate)(
+      ((*vtbl).Activate)(
         device,
         &IID_IAudioClient,
         CLSCTX_ALL,
         std::ptr::null_mut(),
-        &mut audio_client as *mut *mut IAudioClient as *mut *mut std::ffi::c_void
+        &mut audio_client as *mut IAudioClient as *mut *mut std::ffi::c_void
       )
     } < 0 {
+      let vtbl_dev = *(device as *mut *const IMMDevice_Vtbl);
+      let vtbl_enum = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
       unsafe {
-        ((*(*device).lpVtbl).Release)(device);
-        ((*(*enumerator).lpVtbl).Release)(enumerator);
+        ((*vtbl_dev).Release)(device);
+        ((*vtbl_enum).Release)(enumerator);
       };
       return;
     }
 
     let mut format_ptr: *mut WAVEFORMATEX = std::ptr::null_mut();
-    if unsafe { ((*(*audio_client).lpVtbl).GetMixFormat)(audio_client, &mut format_ptr) } < 0 {
+    let vtbl = *(audio_client as *mut *const IAudioClient_Vtbl);
+    if unsafe { ((*vtbl).GetMixFormat)(audio_client, &mut format_ptr) } < 0 {
+      let vtbl_client = *(audio_client as *mut *const IAudioClient_Vtbl);
+      let vtbl_dev = *(device as *mut *const IMMDevice_Vtbl);
+      let vtbl_enum = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
       unsafe {
-        ((*(*audio_client).lpVtbl).Release)(audio_client);
-        ((*(*device).lpVtbl).Release)(device);
-        ((*(*enumerator).lpVtbl).Release)(enumerator);
+        ((*vtbl_client).Release)(audio_client);
+        ((*vtbl_dev).Release)(device);
+        ((*vtbl_enum).Release)(enumerator);
       };
       return;
     }
     let format = unsafe { &*format_ptr };
 
     let hns_period: i64 = 10000000 / 100; // 100ms buffer
+    let vtbl = *(audio_client as *mut *const IAudioClient_Vtbl);
     if unsafe {
-      ((*(*audio_client).lpVtbl).Initialize)(
+      ((*vtbl).Initialize)(
         audio_client,
         AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_LOOPBACK,
@@ -2739,39 +2750,51 @@ fn run_wasapi_loopback() {
         std::ptr::null()
       )
     } < 0 {
+      let vtbl_client = *(audio_client as *mut *const IAudioClient_Vtbl);
+      let vtbl_dev = *(device as *mut *const IMMDevice_Vtbl);
+      let vtbl_enum = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
       unsafe {
         windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
-        ((*(*audio_client).lpVtbl).Release)(audio_client);
-        ((*(*device).lpVtbl).Release)(device);
-        ((*(*enumerator).lpVtbl).Release)(enumerator);
+        ((*vtbl_client).Release)(audio_client);
+        ((*vtbl_dev).Release)(device);
+        ((*vtbl_enum).Release)(enumerator);
       };
       return;
     }
 
-    let mut capture_client: *mut IAudioCaptureClient = std::ptr::null_mut();
+    let mut capture_client: IAudioCaptureClient = std::ptr::null_mut();
+    let vtbl = *(audio_client as *mut *const IAudioClient_Vtbl);
     if unsafe {
-      ((*(*audio_client).lpVtbl).GetService)(
+      ((*vtbl).GetService)(
         audio_client,
         &IID_IAudioCaptureClient,
-        &mut capture_client as *mut *mut IAudioCaptureClient as *mut *mut std::ffi::c_void
+        &mut capture_client as *mut IAudioCaptureClient as *mut *mut std::ffi::c_void
       )
     } < 0 {
+      let vtbl_client = *(audio_client as *mut *const IAudioClient_Vtbl);
+      let vtbl_dev = *(device as *mut *const IMMDevice_Vtbl);
+      let vtbl_enum = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
       unsafe {
         windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
-        ((*(*audio_client).lpVtbl).Release)(audio_client);
-        ((*(*device).lpVtbl).Release)(device);
-        ((*(*enumerator).lpVtbl).Release)(enumerator);
+        ((*vtbl_client).Release)(audio_client);
+        ((*vtbl_dev).Release)(device);
+        ((*vtbl_enum).Release)(enumerator);
       };
       return;
     }
 
-    if unsafe { ((*(*audio_client).lpVtbl).Start)(audio_client) } < 0 {
+    let vtbl = *(audio_client as *mut *const IAudioClient_Vtbl);
+    if unsafe { ((*vtbl).Start)(audio_client) } < 0 {
+      let vtbl_capture = *(capture_client as *mut *const IAudioCaptureClient_Vtbl);
+      let vtbl_client = *(audio_client as *mut *const IAudioClient_Vtbl);
+      let vtbl_dev = *(device as *mut *const IMMDevice_Vtbl);
+      let vtbl_enum = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
       unsafe {
-        ((*(*capture_client).lpVtbl).Release)(capture_client);
+        ((*vtbl_capture).Release)(capture_client);
         windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
-        ((*(*audio_client).lpVtbl).Release)(audio_client);
-        ((*(*device).lpVtbl).Release)(device);
-        ((*(*enumerator).lpVtbl).Release)(enumerator);
+        ((*vtbl_client).Release)(audio_client);
+        ((*vtbl_dev).Release)(device);
+        ((*vtbl_enum).Release)(enumerator);
       };
       return;
     }
@@ -2787,15 +2810,17 @@ fn run_wasapi_loopback() {
 
     while IS_CAPTURING_AUDIO.load(std::sync::atomic::Ordering::SeqCst) {
       let mut packet_len: u32 = 0;
-      if unsafe { ((*(*capture_client).lpVtbl).GetNextPacketSize)(capture_client, &mut packet_len) } >= 0 && packet_len > 0 {
+      let vtbl_capture = *(capture_client as *mut *const IAudioCaptureClient_Vtbl);
+      if unsafe { ((*vtbl_capture).GetNextPacketSize)(capture_client, &mut packet_len) } >= 0 && packet_len > 0 {
         let mut data: *mut u8 = std::ptr::null_mut();
         let mut num_frames: u32 = 0;
         let mut flags: u32 = 0;
         let mut dev_pos: u64 = 0;
         let mut qpc_pos: u64 = 0;
         
+        let vtbl_capture = *(capture_client as *mut *const IAudioCaptureClient_Vtbl);
         if unsafe {
-          ((*(*capture_client).lpVtbl).GetBuffer)(
+          ((*vtbl_capture).GetBuffer)(
             capture_client,
             &mut data,
             &mut num_frames,
@@ -2827,19 +2852,25 @@ fn run_wasapi_loopback() {
             }
           }
 
-          unsafe { ((*(*capture_client).lpVtbl).ReleaseBuffer)(capture_client, num_frames) };
+          let vtbl_capture = *(capture_client as *mut *const IAudioCaptureClient_Vtbl);
+          unsafe { ((*vtbl_capture).ReleaseBuffer)(capture_client, num_frames) };
         }
       }
       std::thread::sleep(Duration::from_millis(10));
     }
 
+    let vtbl_client = *(audio_client as *mut *const IAudioClient_Vtbl);
+    let vtbl_capture = *(capture_client as *mut *const IAudioCaptureClient_Vtbl);
+    let vtbl_dev = *(device as *mut *const IMMDevice_Vtbl);
+    let vtbl_enum = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
+    
     unsafe {
-      ((*(*audio_client).lpVtbl).Stop)(audio_client);
-      ((*(*capture_client).lpVtbl).Release)(capture_client);
+      ((*vtbl_client).Stop)(audio_client);
+      ((*vtbl_capture).Release)(capture_client);
       windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
-      ((*(*audio_client).lpVtbl).Release)(audio_client);
-      ((*(*device).lpVtbl).Release)(device);
-      ((*(*enumerator).lpVtbl).Release)(enumerator);
+      ((*vtbl_client).Release)(audio_client);
+      ((*vtbl_dev).Release)(device);
+      ((*vtbl_enum).Release)(enumerator);
     };
   }
 }
