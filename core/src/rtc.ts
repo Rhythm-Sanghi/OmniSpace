@@ -93,9 +93,8 @@ export class OmniRTCManager {
       'https://flash-speaker.metered.live/api/v1/turn/credentials?apiKey=e1f1ec7096e60451ff79174eba025c2ecd46'
     )
       .then((response) => {
-        if (response.ok) {
-          return response.json();
-        }
+        if (!response.ok) return null;
+        return response.json();
       })
       .then((credentials) => {
         if (Array.isArray(credentials) && credentials.length > 0) {
