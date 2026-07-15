@@ -59,7 +59,7 @@ export default function App() {
   const workspaceRef = useRef<HTMLDivElement>(null);
 
   // Load configuration from environment
-  const signalingUrl = ((import.meta as any).env.VITE_SIGNALING_URL as string) || 'ws://localhost:3000';
+  const signalingUrl = ((import.meta as any).env.VITE_SIGNALING_URL as string) || 'wss://omnispace-322x.onrender.com';
 
   const addLog = (msg: string) => {
     setLogs((prev) => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 49)]);

@@ -37,7 +37,7 @@ export default function App() {
 
   const viewportRef = useRef<HTMLDivElement>(null);
 
-  const signalingUrl = ((import.meta as any).env.VITE_SIGNALING_URL as string) || 'ws://localhost:3000';
+  const signalingUrl = ((import.meta as any).env.VITE_SIGNALING_URL as string) || 'wss://omnispace-322x.onrender.com';
 
   useEffect(() => {
     const doc = new Y.Doc();
