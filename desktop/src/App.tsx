@@ -24,7 +24,7 @@ import { PermissionOnboarding } from './components/PermissionOnboarding.js';
 
 export default function App() {
   const [localDeviceId] = useState(() => getDeviceId());
-  const [pin, setPin] = useState('');
+  const [pin, setPin] = useState(() => Math.floor(100000 + Math.random() * 900000).toString());
   const [roomPin, setRoomPin] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -495,6 +495,11 @@ export default function App() {
                 <p className="text-xs text-slate-400">
                   Enter a 6-digit room PIN code to pair this computer with other tablets, mobiles, or browser windows.
                 </p>
+
+                <div className="flex flex-col items-center gap-1 p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl text-center">
+                  <span className="text-[10px] uppercase tracking-wider text-purple-400 font-bold">Suggested Pairing PIN</span>
+                  <span className="text-2xl font-bold tracking-widest text-purple-300 font-mono">{pin}</span>
+                </div>
 
                 <div className="flex flex-col gap-2">
                   <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
