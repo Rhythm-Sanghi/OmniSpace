@@ -9,7 +9,6 @@ use std::time::Duration;
 use std::io::{Read, Write};
 use tauri::Manager;
 
-#[cfg(target_os = "linux")]
 use lazy_static::lazy_static;
 
 static IS_TRACKING: AtomicBool = AtomicBool::new(false);
@@ -116,7 +115,71 @@ use windows_sys::Win32::System::DataExchange::{
   OpenClipboard, CloseClipboard, EmptyClipboard, GetClipboardData, SetClipboardData
 };
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock, GlobalAlloc, GlobalFree};
+use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock, GlobalAlloc};
+
+#[cfg(target_os = "windows")]
+extern "system" {
+  fn GlobalFree(hmem: isize) -> isize;
+}
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Com::{CoInitialize, CoCreateInstance};
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Media::Audio::{
+  IMMDeviceEnumerator, IMMDevice, IAudioClient, WAVEFORMATEX,
+  IAudioCaptureClient, WAVEFORMATEXTENSIBLE
+};
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Graphics::Gdi::BITMAPINFOHEADER;
+
+#[cfg(target_os = "windows")]
+const CLSCTX_ALL: u32 = 23;
+
+#[cfg(target_os = "windows")]
+const eRender: i32 = 0;
+
+#[cfg(target_os = "windows")]
+const eConsole: i32 = 0;
+
+#[cfg(target_os = "windows")]
+const AUDCLNT_SHAREMODE_SHARED: i32 = 0;
+
+#[cfg(target_os = "windows")]
+const AUDCLNT_STREAMFLAGS_LOOPBACK: u32 = 0x00020000;
+
+#[cfg(target_os = "windows")]
+const CLSID_MMDeviceEnumerator: windows_sys::core::GUID = windows_sys::core::GUID {
+  data1: 0xBCDE0395,
+  data2: 0xE52F,
+  data3: 0x467C,
+  data4: [0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E],
+};
+
+#[cfg(target_os = "windows")]
+const IID_IMMDeviceEnumerator: windows_sys::core::GUID = windows_sys::core::GUID {
+  data1: 0xA95664D2,
+  data2: 0x9614,
+  data3: 0x4F35,
+  data4: [0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6],
+};
+
+#[cfg(target_os = "windows")]
+const IID_IAudioClient: windows_sys::core::GUID = windows_sys::core::GUID {
+  data1: 0x1CB9AD4C,
+  data2: 0xDBFA,
+  data3: 0x4C32,
+  data4: [0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2],
+};
+
+#[cfg(target_os = "windows")]
+const IID_IAudioCaptureClient: windows_sys::core::GUID = windows_sys::core::GUID {
+  data1: 0xC8ADBD64,
+  data2: 0xE71E,
+  data3: 0x48A0,
+  data4: [0xA4, 0xDE, 0x18, 0x5C, 0x38, 0x5C, 0xD4, 0x3F],
+};
 
 #[cfg(target_os = "windows")]
 const EVENT_OBJECT_DESTROY: u32 = 0x8001;
@@ -436,11 +499,11 @@ fn get_clipboard_text() -> Result<String, String> {
 
     if IsClipboardFormatAvailable(13) != 0 { // CF_UNICODETEXT = 13
       let handle = GetClipboardData(13);
-      if handle.is_null() {
+      if handle == 0 {
         CloseClipboard();
         return Err("Failed to get unicode text handle".into());
       }
-      let ptr = GlobalLock(handle) as *const u16;
+      let ptr = GlobalLock(handle as *mut _) as *const u16;
       if ptr.is_null() {
         CloseClipboard();
         return Err("Failed to lock unicode text handle".into());
@@ -451,24 +514,24 @@ fn get_clipboard_text() -> Result<String, String> {
       }
       let slice = std::slice::from_raw_parts(ptr, len);
       let text = String::from_utf16_lossy(slice);
-      GlobalUnlock(handle);
+      GlobalUnlock(handle as *mut _);
       CloseClipboard();
       return Ok(text);
     }
 
     if IsClipboardFormatAvailable(8) != 0 { // CF_DIB = 8
       let handle = GetClipboardData(8);
-      if handle.is_null() {
+      if handle == 0 {
         CloseClipboard();
         return Err("Failed to get DIB handle".into());
       }
-      let ptr = GlobalLock(handle);
+      let ptr = GlobalLock(handle as *mut _);
       if ptr.is_null() {
         CloseClipboard();
         return Err("Failed to lock DIB handle".into());
       }
       
-      let header = &*(ptr as *const windows_sys::Win32::UI::WindowsAndMessaging::BITMAPINFOHEADER);
+      let header = &*(ptr as *const BITMAPINFOHEADER);
       let header_size = header.biSize as usize;
       let image_size = if header.biSizeImage == 0 {
         let width = header.biWidth as usize;
@@ -493,7 +556,7 @@ fn get_clipboard_text() -> Result<String, String> {
       bmp_file.extend_from_slice(&(offset as u32).to_le_bytes());
       bmp_file.extend_from_slice(dib_slice);
       
-      GlobalUnlock(handle);
+      GlobalUnlock(handle as *mut _);
       CloseClipboard();
       
       let base64_str = base64_encode(&bmp_file);
@@ -531,15 +594,15 @@ fn set_clipboard_text(text: &str) -> Result<(), String> {
           }
           let ptr = GlobalLock(handle);
           if ptr.is_null() {
-            GlobalFree(handle);
+            GlobalFree(handle as isize);
             CloseClipboard();
             return Err("Failed to lock global memory".into());
           }
           std::ptr::copy_nonoverlapping(dib_bytes.as_ptr(), ptr as *mut u8, dib_bytes.len());
           GlobalUnlock(handle);
           
-          if SetClipboardData(8, handle).is_null() { // CF_DIB = 8
-            GlobalFree(handle);
+          if SetClipboardData(8, handle as isize) == 0 { // CF_DIB = 8
+            GlobalFree(handle as isize);
             CloseClipboard();
             return Err("Failed to set clipboard DIB data".into());
           }
@@ -558,15 +621,15 @@ fn set_clipboard_text(text: &str) -> Result<(), String> {
     }
     let ptr = GlobalLock(handle);
     if ptr.is_null() {
-      GlobalFree(handle);
+      GlobalFree(handle as isize);
       CloseClipboard();
       return Err("Failed to lock allocated global memory".into());
     }
     std::ptr::copy_nonoverlapping(utf16.as_ptr(), ptr as *mut u16, utf16.len());
     GlobalUnlock(handle);
 
-    if SetClipboardData(13, handle).is_null() { // CF_UNICODETEXT = 13
-      GlobalFree(handle);
+    if SetClipboardData(13, handle as isize) == 0 { // CF_UNICODETEXT = 13
+      GlobalFree(handle as isize);
       CloseClipboard();
       return Err("Failed to set clipboard data".into());
     }
@@ -631,7 +694,7 @@ fn start_tracking_window(app_handle: tauri::AppHandle, handle: usize) {
         SetWinEventHook(
           EVENT_OBJECT_DESTROY,
           EVENT_OBJECT_LOCATIONCHANGE,
-          std::ptr::null_mut(),
+          0,
           Some(win_event_proc),
           0,
           0,
@@ -643,7 +706,7 @@ fn start_tracking_window(app_handle: tauri::AppHandle, handle: usize) {
         tx.send((thread_id, hook as isize)).unwrap_or(());
 
         let mut msg = MSG {
-          hwnd: std::ptr::null_mut(),
+          hwnd: 0,
           message: 0,
           wParam: 0,
           lParam: 0,
@@ -652,7 +715,7 @@ fn start_tracking_window(app_handle: tauri::AppHandle, handle: usize) {
         };
 
         unsafe {
-          while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+          while GetMessageW(&mut msg, 0, 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
           }
