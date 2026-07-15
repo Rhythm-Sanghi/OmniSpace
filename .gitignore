@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+.gemini/
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db
+out/
+build/
+desktop/src-tauri/target/

@@ -1,0 +1,34 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "https://localhost:5173",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "omni-space",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": true
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.omnispace.app",
+      "targets": "all"
+    },
+    "security": {
+      "csp": null
+    },
+    "window": [
+      {
+        "fullscreen": false,
+        "height": 600,
+        "resizable": true,
+        "title": "Omni-Space Desk Manager",
+        "width": 1100
+      }
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Install Linux system dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libx11-dev libxtst-dev libudev-dev
+
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build all packages
+      run: npm run build:all
+
+    - name: Run Vitest unit tests
+      run: npm run test

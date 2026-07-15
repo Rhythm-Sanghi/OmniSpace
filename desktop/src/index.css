@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Outfit', sans-serif;
+  background-color: #020617; /* Slate 950 */
+  color: #f8fafc;
+  overflow: hidden;
+  margin: 0;
+}
+
+/* Glassmorphism panel styling helper */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+/* Styled grid overlay for coordinates arrangement canvas */
+.grid-overlay {
+  background-size: 40px 40px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+/* Easing cursor trail glow effect */
+.cursor-glow {
+  box-shadow: 0 0 20px 4px rgba(168, 85, 247, 0.3);
+}
