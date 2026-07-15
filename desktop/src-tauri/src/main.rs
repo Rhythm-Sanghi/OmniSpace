@@ -540,7 +540,7 @@ fn get_clipboard_text() -> Result<String, String> {
         let row_stride = ((width * bpp + 31) / 32) * 4;
         row_stride * height
       } else {
-        header.biSizeImage as usize;
+        header.biSizeImage as usize
       };
       
       let total_dib_size = header_size + image_size;
@@ -574,7 +574,7 @@ fn set_clipboard_text(text: &str) -> Result<(), String> {
     use windows_sys::Win32::System::DataExchange::{
       OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData
     };
-    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GlobalFree, GMEM_MOVEABLE};
+    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 
     if OpenClipboard(0) == 0 {
       return Err("Failed to open clipboard".into());
@@ -2681,102 +2681,140 @@ fn run_wasapi_loopback() {
     CoInitialize(std::ptr::null());
     
     let mut enumerator: *mut IMMDeviceEnumerator = std::ptr::null_mut();
-    if CoCreateInstance(
-      &CLSID_MMDeviceEnumerator,
-      std::ptr::null_mut(),
-      CLSCTX_ALL,
-      &IID_IMMDeviceEnumerator,
-      &mut enumerator as *mut *mut IMMDeviceEnumerator as *mut *mut std::ffi::c_void
-    ) < 0 {
+    if unsafe {
+      CoCreateInstance(
+        &CLSID_MMDeviceEnumerator,
+        std::ptr::null_mut(),
+        CLSCTX_ALL,
+        &IID_IMMDeviceEnumerator,
+        &mut enumerator as *mut *mut IMMDeviceEnumerator as *mut *mut std::ffi::c_void
+      )
+    } < 0 {
       return;
     }
-    let enumerator = &*enumerator;
 
     let mut device: *mut IMMDevice = std::ptr::null_mut();
-    if enumerator.GetDefaultAudioEndpoint(eRender, eConsole, &mut device) < 0 {
-      enumerator.Release();
+    if unsafe { ((*(*enumerator).lpVtbl).GetDefaultAudioEndpoint)(enumerator, eRender, eConsole, &mut device) } < 0 {
+      unsafe { ((*(*enumerator).lpVtbl).Release)(enumerator) };
       return;
     }
-    let device = &*device;
 
-    let mut audio_client_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
-    if device.Activate(&IID_IAudioClient, CLSCTX_ALL, std::ptr::null_mut(), &mut audio_client_ptr) < 0 {
-      device.Release();
-      enumerator.Release();
+    let mut audio_client: *mut IAudioClient = std::ptr::null_mut();
+    if unsafe {
+      ((*(*device).lpVtbl).Activate)(
+        device,
+        &IID_IAudioClient,
+        CLSCTX_ALL,
+        std::ptr::null_mut(),
+        &mut audio_client as *mut *mut IAudioClient as *mut *mut std::ffi::c_void
+      )
+    } < 0 {
+      unsafe {
+        ((*(*device).lpVtbl).Release)(device);
+        ((*(*enumerator).lpVtbl).Release)(enumerator);
+      };
       return;
     }
-    let audio_client = &*(audio_client_ptr as *mut IAudioClient);
 
     let mut format_ptr: *mut WAVEFORMATEX = std::ptr::null_mut();
-    if audio_client.GetMixFormat(&mut format_ptr) < 0 {
-      audio_client.Release();
-      device.Release();
-      enumerator.Release();
+    if unsafe { ((*(*audio_client).lpVtbl).GetMixFormat)(audio_client, &mut format_ptr) } < 0 {
+      unsafe {
+        ((*(*audio_client).lpVtbl).Release)(audio_client);
+        ((*(*device).lpVtbl).Release)(device);
+        ((*(*enumerator).lpVtbl).Release)(enumerator);
+      };
       return;
     }
-    let format = &*format_ptr;
+    let format = unsafe { &*format_ptr };
 
     let hns_period: i64 = 10000000 / 100; // 100ms buffer
-    if audio_client.Initialize(
-      AUDCLNT_SHAREMODE_SHARED,
-      AUDCLNT_STREAMFLAGS_LOOPBACK,
-      hns_period,
-      0,
-      format_ptr,
-      std::ptr::null()
-    ) < 0 {
-      windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
-      audio_client.Release();
-      device.Release();
-      enumerator.Release();
+    if unsafe {
+      ((*(*audio_client).lpVtbl).Initialize)(
+        audio_client,
+        AUDCLNT_SHAREMODE_SHARED,
+        AUDCLNT_STREAMFLAGS_LOOPBACK,
+        hns_period,
+        0,
+        format_ptr,
+        std::ptr::null()
+      )
+    } < 0 {
+      unsafe {
+        windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
+        ((*(*audio_client).lpVtbl).Release)(audio_client);
+        ((*(*device).lpVtbl).Release)(device);
+        ((*(*enumerator).lpVtbl).Release)(enumerator);
+      };
       return;
     }
 
-    let mut capture_client_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
-    if audio_client.GetService(&IID_IAudioCaptureClient, &mut capture_client_ptr) < 0 {
-      windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
-      audio_client.Release();
-      device.Release();
-      enumerator.Release();
-      return;
-    }
-    let capture_client = &*(capture_client_ptr as *mut IAudioCaptureClient);
-
-    if audio_client.Start() < 0 {
-      capture_client.Release();
-      windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
-      audio_client.Release();
-      device.Release();
-      enumerator.Release();
+    let mut capture_client: *mut IAudioCaptureClient = std::ptr::null_mut();
+    if unsafe {
+      ((*(*audio_client).lpVtbl).GetService)(
+        audio_client,
+        &IID_IAudioCaptureClient,
+        &mut capture_client as *mut *mut IAudioCaptureClient as *mut *mut std::ffi::c_void
+      )
+    } < 0 {
+      unsafe {
+        windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
+        ((*(*audio_client).lpVtbl).Release)(audio_client);
+        ((*(*device).lpVtbl).Release)(device);
+        ((*(*enumerator).lpVtbl).Release)(enumerator);
+      };
       return;
     }
 
-    let is_float = format.wFormatTag == 0xFFFE && {
+    if unsafe { ((*(*audio_client).lpVtbl).Start)(audio_client) } < 0 {
+      unsafe {
+        ((*(*capture_client).lpVtbl).Release)(capture_client);
+        windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
+        ((*(*audio_client).lpVtbl).Release)(audio_client);
+        ((*(*device).lpVtbl).Release)(device);
+        ((*(*enumerator).lpVtbl).Release)(enumerator);
+      };
+      return;
+    }
+
+    let is_float = format.wFormatTag == 0xFFFE && unsafe {
       let ext = &*(format_ptr as *const WAVEFORMATEXTENSIBLE);
-      ext.SubFormat == windows_sys::core::GUID::from_u128(0x00000003_0000_0010_8000_00aa00389b71)
+      let sub_format = ext.SubFormat;
+      sub_format.data1 == 0x00000003
+        && sub_format.data2 == 0x0000
+        && sub_format.data3 == 0x0010
+        && sub_format.data4 == [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71]
     };
 
     while IS_CAPTURING_AUDIO.load(std::sync::atomic::Ordering::SeqCst) {
       let mut packet_len: u32 = 0;
-      if capture_client.GetNextPacketSize(&mut packet_len) >= 0 && packet_len > 0 {
+      if unsafe { ((*(*capture_client).lpVtbl).GetNextPacketSize)(capture_client, &mut packet_len) } >= 0 && packet_len > 0 {
         let mut data: *mut u8 = std::ptr::null_mut();
         let mut num_frames: u32 = 0;
         let mut flags: u32 = 0;
         let mut dev_pos: u64 = 0;
         let mut qpc_pos: u64 = 0;
         
-        if capture_client.GetBuffer(&mut data, &mut num_frames, &mut flags, &mut dev_pos, &mut qpc_pos) >= 0 {
+        if unsafe {
+          ((*(*capture_client).lpVtbl).GetBuffer)(
+            capture_client,
+            &mut data,
+            &mut num_frames,
+            &mut flags,
+            &mut dev_pos,
+            &mut qpc_pos
+          )
+        } >= 0 {
           let num_channels = format.nChannels as usize;
           let mut pcm_out = Vec::with_capacity(num_frames as usize * num_channels * 2);
           
           if is_float {
-            let float_slice = std::slice::from_raw_parts(data as *const f32, num_frames as usize * num_channels);
+            let float_slice = unsafe { std::slice::from_raw_parts(data as *const f32, num_frames as usize * num_channels) };
             for &f in float_slice {
               let sample = (f.clamp(-1.0, 1.0) * 32767.0) as i16;
               pcm_out.extend_from_slice(&sample.to_le_bytes());
             }
           } else if format.wBitsPerSample == 16 {
-            let pcm_slice = std::slice::from_raw_parts(data, num_frames as usize * num_channels * 2);
+            let pcm_slice = unsafe { std::slice::from_raw_parts(data, num_frames as usize * num_channels * 2) };
             pcm_out.extend_from_slice(pcm_slice);
           }
 
@@ -2789,18 +2827,20 @@ fn run_wasapi_loopback() {
             }
           }
 
-          capture_client.ReleaseBuffer(num_frames);
+          unsafe { ((*(*capture_client).lpVtbl).ReleaseBuffer)(capture_client, num_frames) };
         }
       }
       std::thread::sleep(Duration::from_millis(10));
     }
 
-    audio_client.Stop();
-    capture_client.Release();
-    windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
-    audio_client.Release();
-    device.Release();
-    enumerator.Release();
+    unsafe {
+      ((*(*audio_client).lpVtbl).Stop)(audio_client);
+      ((*(*capture_client).lpVtbl).Release)(capture_client);
+      windows_sys::Win32::System::Com::CoTaskMemFree(format_ptr as *mut std::ffi::c_void);
+      ((*(*audio_client).lpVtbl).Release)(audio_client);
+      ((*(*device).lpVtbl).Release)(device);
+      ((*(*enumerator).lpVtbl).Release)(enumerator);
+    };
   }
 }
 
