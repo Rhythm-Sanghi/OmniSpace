@@ -14,12 +14,4 @@ export default defineConfig({
     host: true,
     port: 5173,
   },
-  build: {
-    rollupOptions: {
-      external: [
-        '@tauri-apps/api/tauri',
-        '@tauri-apps/api/event',
-      ],
-    },
-  },
 });
