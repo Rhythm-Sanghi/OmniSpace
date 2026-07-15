@@ -45,6 +45,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          projectPath: desktop
           tagName: ${{ github.ref_name }}
           releaseName: 'OmniSpace v__VERSION__'
           releaseBody: 'OmniSpace cross-device workspace manager production release.'
