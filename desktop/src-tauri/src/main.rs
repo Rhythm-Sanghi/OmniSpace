@@ -128,9 +128,97 @@ use windows_sys::Win32::System::Com::{CoInitialize, CoCreateInstance};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Media::Audio::{
   IMMDeviceEnumerator, IMMDevice, IAudioClient, WAVEFORMATEX,
-  IAudioCaptureClient, WAVEFORMATEXTENSIBLE,
-  IMMDeviceEnumerator_Vtbl, IMMDevice_Vtbl, IAudioClient_Vtbl, IAudioCaptureClient_Vtbl
+  IAudioCaptureClient, WAVEFORMATEXTENSIBLE
 };
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct IMMDeviceEnumerator_Vtbl {
+  QueryInterface: usize,
+  AddRef: usize,
+  Release: unsafe extern "system" fn(this: *mut std::ffi::c_void) -> u32,
+  EnumAudioEndpoints: usize,
+  GetDefaultAudioEndpoint: unsafe extern "system" fn(
+    this: *mut std::ffi::c_void,
+    dataFlow: i32,
+    role: i32,
+    ppEndpoint: *mut *mut std::ffi::c_void,
+  ) -> i32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct IMMDevice_Vtbl {
+  QueryInterface: usize,
+  AddRef: usize,
+  Release: unsafe extern "system" fn(this: *mut std::ffi::c_void) -> u32,
+  Activate: unsafe extern "system" fn(
+    this: *mut std::ffi::c_void,
+    iid: *const windows_sys::core::GUID,
+    dwClsContext: u32,
+    pActivationParams: *mut std::ffi::c_void,
+    ppInterface: *mut *mut std::ffi::c_void,
+  ) -> i32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct IAudioClient_Vtbl {
+  QueryInterface: usize,
+  AddRef: usize,
+  Release: unsafe extern "system" fn(this: *mut std::ffi::c_void) -> u32,
+  Initialize: unsafe extern "system" fn(
+    this: *mut std::ffi::c_void,
+    ShareMode: i32,
+    StreamFlags: u32,
+    hnsBufferDuration: i64,
+    hnsPeriodicity: i64,
+    pFormat: *const WAVEFORMATEX,
+    AudioSessionGuid: *const windows_sys::core::GUID,
+  ) -> i32,
+  GetBufferSize: usize,
+  GetStreamLatency: usize,
+  GetCurrentPadding: usize,
+  IsFormatSupported: usize,
+  GetMixFormat: unsafe extern "system" fn(
+    this: *mut std::ffi::c_void,
+    ppDeviceFormat: *mut *mut WAVEFORMATEX,
+  ) -> i32,
+  GetDevicePeriod: usize,
+  Start: unsafe extern "system" fn(this: *mut std::ffi::c_void) -> i32,
+  Stop: unsafe extern "system" fn(this: *mut std::ffi::c_void) -> i32,
+  Reset: usize,
+  SetEventHandle: usize,
+  GetService: unsafe extern "system" fn(
+    this: *mut std::ffi::c_void,
+    riid: *const windows_sys::core::GUID,
+    ppv: *mut *mut std::ffi::c_void,
+  ) -> i32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct IAudioCaptureClient_Vtbl {
+  QueryInterface: usize,
+  AddRef: usize,
+  Release: unsafe extern "system" fn(this: *mut std::ffi::c_void) -> u32,
+  GetBuffer: unsafe extern "system" fn(
+    this: *mut std::ffi::c_void,
+    ppData: *mut *mut u8,
+    pNumFramesToRead: *mut u32,
+    pdwFlags: *mut u32,
+    pu64DevicePosition: *mut u64,
+    pu64QPCPosition: *mut u64,
+  ) -> i32,
+  ReleaseBuffer: unsafe extern "system" fn(
+    this: *mut std::ffi::c_void,
+    NumFramesRead: u32,
+  ) -> i32,
+  GetNextPacketSize: unsafe extern "system" fn(
+    this: *mut std::ffi::c_void,
+    pNumFramesInNextPacket: *mut u32,
+  ) -> i32,
+}
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Graphics::Gdi::BITMAPINFOHEADER;
@@ -575,7 +663,7 @@ fn set_clipboard_text(text: &str) -> Result<(), String> {
     use windows_sys::Win32::System::DataExchange::{
       OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData
     };
-    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock};
 
     if OpenClipboard(0) == 0 {
       return Err("Failed to open clipboard".into());
