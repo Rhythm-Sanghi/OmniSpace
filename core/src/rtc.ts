@@ -88,20 +88,23 @@ export class OmniRTCManager {
     }, 5000);
   }
 
-  public async connect() {
-    try {
-      const response = await fetch(
-        'https://flash-speaker.metered.live/api/v1/turn/credentials?apiKey=e1f1ec7096e60451ff79174eba025c2ecd46'
-      );
-      if (response.ok) {
-        const credentials = await response.json();
+  public connect() {
+    fetch(
+      'https://flash-speaker.metered.live/api/v1/turn/credentials?apiKey=e1f1ec7096e60451ff79174eba025c2ecd46'
+    )
+      .then((response) => {
+        if (response.ok) {
+          return response.json();
+        }
+      })
+      .then((credentials) => {
         if (Array.isArray(credentials) && credentials.length > 0) {
           this.iceServers = credentials;
         }
-      }
-    } catch (err) {
-      console.warn('Failed to fetch dynamic TURN credentials, using default STUN:', err);
-    }
+      })
+      .catch((err) => {
+        console.warn('Failed to fetch dynamic TURN credentials, using default STUN:', err);
+      });
 
     this.ws = new WebSocket(this.signalingUrl);
 
