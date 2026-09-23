@@ -1,6 +1,6 @@
 {
   "name": "omni-space",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Omni-Space: A Unified, P2P, Cross-Device Window Manager",
