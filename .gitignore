@@ -8,4 +8,5 @@ target/
 Thumbs.db
 out/
 build/
+coverage/
 desktop/src-tauri/target/
