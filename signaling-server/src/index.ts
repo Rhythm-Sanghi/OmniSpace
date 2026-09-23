@@ -267,23 +267,37 @@ function getClientIp(req: http.IncomingMessage): string {
 
 // Helper to validate connection origins against CSWSH
 function isOriginAllowed(origin: string | undefined): boolean {
-  const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV || process.env.NODE_ENV === 'test';
+  // Direct socket clients, mobile webviews without origin header, curl
   if (!origin) {
-    return isDev;
+    return true;
   }
+  // Explicit wildcard or configured origin match
   if (ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin)) return true;
+  // Tauri desktop environments
   if (origin.startsWith('tauri://') || origin.startsWith('https://tauri.localhost')) {
     return true;
   }
   try {
     const parsed = new URL(origin);
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+    // Allow localhost, loopback, private LAN IP addresses, and Cloudflare Pages / Render domains
+    if (
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '::1' ||
+      parsed.hostname.startsWith('192.168.') ||
+      parsed.hostname.startsWith('10.') ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(parsed.hostname) ||
+      parsed.hostname.endsWith('.pages.dev') ||
+      parsed.hostname.endsWith('.onrender.com') ||
+      parsed.hostname.endsWith('.vercel.app')
+    ) {
       return true;
     }
   } catch {
     return false;
   }
-  return ALLOWED_ORIGINS.length === 0 && isDev;
+  // If no restrictive ALLOWED_ORIGINS whitelist is configured, allow all origins by default
+  return ALLOWED_ORIGINS.length === 0;
 }
 
 // Helper to determine if IP is local/dev

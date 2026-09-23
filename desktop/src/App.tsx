@@ -826,9 +826,9 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 flex flex-col overflow-y-auto">
               {/* Arrange Displays component */}
-              <div className="flex-1 border-b border-slate-900 min-h-[300px]">
+              <div className="border-b border-slate-900 min-h-[220px] max-h-[280px]">
                 <CalibrationScreen
                   localDeviceId={localDeviceId}
                   devices={devices}

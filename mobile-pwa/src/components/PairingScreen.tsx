@@ -5,12 +5,14 @@ interface PairingScreenProps {
   onPair: (pin: string) => void;
   errorMessage: string | null;
   deviceId: string;
+  isConnecting?: boolean;
 }
 
 export const PairingScreen: React.FC<PairingScreenProps> = ({
   onPair,
   errorMessage,
   deviceId,
+  isConnecting = false,
 }) => {
   const [pin, setPin] = useState('');
   const [scanning, setScanning] = useState(false);
@@ -186,10 +188,14 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
                 />
                 <button
                   type="submit"
-                  disabled={pin.length !== 6}
-                  className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-slate-100 px-4 rounded-lg flex items-center justify-center transition"
+                  disabled={pin.length !== 6 || isConnecting}
+                  className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-slate-100 px-4 rounded-lg flex items-center justify-center transition min-w-[48px]"
                 >
-                  <Send size={15} />
+                  {isConnecting ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <Send size={15} />
+                  )}
                 </button>
               </div>
             </div>
@@ -202,13 +208,21 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
 
             <button
               type="button"
+              disabled={isConnecting}
               onClick={startScanner}
-              className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-semibold transition"
+              className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 border border-slate-800 text-slate-200 py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-semibold transition"
             >
               <Camera size={14} className="text-purple-500" />
               Scan QR Code
             </button>
           </form>
+        )}
+
+        {isConnecting && (
+          <div className="flex items-center justify-center gap-2 text-xs text-purple-300 bg-purple-500/10 border border-purple-500/20 p-2.5 rounded-lg">
+            <div className="w-3.5 h-3.5 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin shrink-0" />
+            <span>Connecting to Workspace {pin ? `Room ${pin}` : ''}...</span>
+          </div>
         )}
 
         {cameraError && (

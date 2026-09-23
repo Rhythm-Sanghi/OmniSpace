@@ -35,6 +35,7 @@ export default function App() {
   const [localDeviceId] = useState(() => getDeviceId());
   const [roomPin, setRoomPin] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [focusedWindowId, setFocusedWindowId] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<'direct' | 'trackpad'>('direct');
@@ -165,6 +166,8 @@ export default function App() {
   }, []);
 
   const handlePair = (pin: string) => {
+    if (connected || isConnecting || rtcManagerRef.current) return;
+    setIsConnecting(true);
     setErrorMessage(null);
 
     const doc = docRef.current!;
@@ -182,6 +185,7 @@ export default function App() {
 
     rtcManager.onSignalingError = (err) => {
       setErrorMessage(`Signaling error: ${err.message}`);
+      setIsConnecting(false);
     };
 
     // Mobile is destination-only, so getSender returns undefined
@@ -247,6 +251,7 @@ export default function App() {
       const self = devicesMap.get(localDeviceId);
       if (self && self.status === 'connected') {
         setConnected(true);
+        setIsConnecting(false);
         setRoomPin(pin);
         devicesMap.unobserve(checkConnection);
         if (checkConnectionObserverRef.current === checkConnection) {
@@ -275,6 +280,7 @@ export default function App() {
 
     setRemoteStreams({});
     setConnected(false);
+    setIsConnecting(false);
     setRoomPin(null);
   };
 
@@ -470,7 +476,12 @@ export default function App() {
         <ErrorBoundary fallbackTitle="Failed to render companion viewport">
           {!connected && (
             <div className="w-full max-w-sm">
-              <PairingScreen onPair={handlePair} errorMessage={errorMessage} deviceId={localDeviceId} />
+              <PairingScreen
+                onPair={handlePair}
+                errorMessage={errorMessage}
+                deviceId={localDeviceId}
+                isConnecting={isConnecting}
+              />
             </div>
           )}
 
