@@ -58,7 +58,9 @@ jobs:
           components: clippy
 
       - name: Ensure desktop dist directory exists
-        run: mkdir -p desktop/dist
+        run: |
+          mkdir -p desktop/dist
+          echo '<!DOCTYPE html><html><head><title>OmniSpace</title></head><body><div id="root"></div></body></html>' > desktop/dist/index.html
 
       - name: Check Rust Code
         run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
