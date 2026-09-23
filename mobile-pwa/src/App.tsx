@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
-import { LogOut, Smartphone, Clipboard } from 'lucide-react';
+import { LogOut, Smartphone, Clipboard, Tv } from 'lucide-react';
 import {
   getDeviceId,
   initOmniDoc,
@@ -9,6 +9,8 @@ import {
   WindowInstance,
   OmniRTCManager,
   OmniQualityController,
+  OmniCaptureManager,
+  OmniMediaTransportManager,
   focusWindow,
   areWindowsEqual,
   areDevicesEqual,
@@ -73,6 +75,8 @@ export default function App() {
   const [remoteStreams, setRemoteStreams] = useState<{ [streamId: string]: MediaStream }>({});
 
   const qualityControllerRef = useRef<OmniQualityController | null>(null);
+  const captureManagerRef = useRef<OmniCaptureManager | null>(null);
+  const mediaTransportRef = useRef<OmniMediaTransportManager | null>(null);
   const polledWindowIdsRef = useRef<Set<string>>(new Set());
 
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -199,10 +203,24 @@ export default function App() {
       setIsConnecting(false);
     };
 
-    // Mobile is destination-only, so getSender returns undefined
+    // Initialize capture manager
+    const captureManager = new OmniCaptureManager();
+    captureManagerRef.current = captureManager;
+
+    const windowsMap = doc.getMap<WindowInstance>('windows');
+
+    // Initialize media transport manager
+    const mediaTransport = new OmniMediaTransportManager(
+      rtcManager,
+      captureManager,
+      windowsMap
+    );
+    mediaTransportRef.current = mediaTransport;
+
+    // Quality controller with real media transport sender lookup
     const qualityController = new OmniQualityController(
       rtcManager,
-      () => undefined
+      (winId, peerId) => mediaTransport.getSender(winId, peerId)
     );
     qualityControllerRef.current = qualityController;
 
@@ -283,6 +301,12 @@ export default function App() {
       checkConnectionObserverRef.current = null;
     }
 
+    mediaTransportRef.current?.destroy();
+    mediaTransportRef.current = null;
+
+    captureManagerRef.current?.destroy();
+    captureManagerRef.current = null;
+
     qualityControllerRef.current?.destroy();
     qualityControllerRef.current = null;
 
@@ -293,6 +317,46 @@ export default function App() {
     setConnected(false);
     setIsConnecting(false);
     setRoomPin(null);
+  };
+
+  const handleShareScreen = async () => {
+    if (!captureManagerRef.current || !docRef.current) return;
+    const windowId = `win-${crypto.randomUUID()}`;
+    const windowsMap = docRef.current.getMap<WindowInstance>('windows');
+
+    try {
+      const stream = await captureManagerRef.current.startWindowCapture(windowId, (endedId: string) => {
+        docRef.current?.transact(() => {
+          windowsMap.delete(endedId);
+        });
+      });
+
+      setRemoteStreams((prev) => ({
+        ...prev,
+        [stream.id]: stream,
+      }));
+
+      const newWindow: WindowInstance = {
+        id: windowId,
+        title: 'Web Screen Share',
+        width: 800,
+        height: 600,
+        x: 40,
+        y: 40,
+        owningDeviceId: localDeviceId,
+        capturingDeviceId: localDeviceId,
+        hasActiveCapture: true,
+        streamId: stream.id,
+      };
+
+      docRef.current.transact(() => {
+        windowsMap.set(windowId, newWindow);
+      });
+    } catch (err: any) {
+      if (err?.name !== 'NotAllowedError') {
+        console.error('Failed to start display capture:', err);
+      }
+    }
   };
 
   const localDevice = devices.find((d) => d.id === localDeviceId) || null;
@@ -459,6 +523,17 @@ export default function App() {
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               PIN: {roomPin}
             </div>
+
+            <button
+              type="button"
+              onClick={handleShareScreen}
+              className="px-2.5 py-1.5 min-h-[36px] flex items-center justify-center gap-1.5 rounded-lg bg-purple-600/80 hover:bg-purple-600 text-white text-xs font-semibold border border-purple-500/40 transition shadow-md shadow-purple-600/20"
+              title="Share Screen, Window, or Tab"
+              aria-label="Share screen or window"
+            >
+              <Tv size={14} />
+              <span className="hidden sm:inline">Share</span>
+            </button>
 
             <button
               type="button"

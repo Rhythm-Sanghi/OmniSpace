@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, ShieldAlert, Send } from 'lucide-react';
+import QRCode from 'qrcode';
+import { Camera, ShieldAlert, Send, Copy, Check, Tv, Smartphone } from 'lucide-react';
 
 interface PairingScreenProps {
   onPair: (pin: string) => void;
@@ -14,6 +15,21 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
   deviceId,
   isConnecting = false,
 }) => {
+  // Mode selection: 'host' (generate code to pair) vs 'join' (type code or scan QR)
+  const [mode, setMode] = useState<'host' | 'join'>(() => {
+    if (typeof window !== 'undefined' && window.location.search.includes('pin=')) {
+      return 'join';
+    }
+    if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+      return 'host';
+    }
+    return 'join';
+  });
+
+  const [hostPin] = useState(() => Math.floor(100000 + Math.random() * 900000).toString());
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
   const [pin, setPin] = useState('');
   const [scanning, setScanning] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -24,6 +40,39 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const jsQrModuleRef = useRef<any>(null);
+
+  // Generate QR Code for Host Mode
+  useEffect(() => {
+    let active = true;
+    const url = `https://omnispace.pages.dev/?pin=${hostPin}`;
+    QRCode.toDataURL(url, {
+      width: 220,
+      margin: 2,
+      color: {
+        dark: '#ffffff',
+        light: '#090d16',
+      },
+      errorCorrectionLevel: 'M',
+    })
+      .then((dataUrl) => {
+        if (active) setQrDataUrl(dataUrl);
+      })
+      .catch((err) => {
+        console.error('Failed to generate QR code:', err);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [hostPin]);
+
+  const handleCopyLink = () => {
+    const url = `https://omnispace.pages.dev/?pin=${hostPin}`;
+    navigator.clipboard?.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
 
   const startScanner = async () => {
     setCameraError(null);
@@ -89,10 +138,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
       });
 
       if (code && code.data) {
-        // Assume code data is just the room PIN or an omni-space url containing pin query
         let detectedPin = code.data.trim();
-        
-        // Extract 6-digit pin if url format
         const match = detectedPin.match(/pin=(\d{6})/);
         if (match) {
           detectedPin = match[1];
@@ -127,16 +173,112 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6 bg-slate-950 text-slate-100 min-h-screen">
       {/* Title */}
-      <div className="flex flex-col items-center gap-2 mb-8 text-center">
-        <div className="text-4xl">📱</div>
-        <h1 className="text-2xl font-bold tracking-wide mt-2">Pair Companion Device</h1>
-        <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
-          Link your mobile browser to the desktop workspace. Drag items across screens seamlessly.
+      <div className="flex flex-col items-center gap-2 mb-6 text-center">
+        <div className="text-4xl">{mode === 'host' ? '🌌' : '📱'}</div>
+        <h1 className="text-2xl font-bold tracking-wide mt-1">
+          {mode === 'host' ? 'Host Web Workspace' : 'Pair Companion Device'}
+        </h1>
+        <p className="text-xs text-slate-400 max-w-sm leading-relaxed">
+          {mode === 'host'
+            ? 'Generate a room code on this browser. Connect your phone or another laptop to share screens and input.'
+            : 'Enter a room PIN or scan the QR code displayed on your host laptop to connect.'}
         </p>
       </div>
 
-      <div className="w-full max-w-sm glass-panel p-6 rounded-2xl flex flex-col gap-6 relative overflow-hidden">
-        {scanning ? (
+      {/* Mode Switcher Tabs */}
+      <div className="w-full max-w-sm flex bg-slate-900/90 p-1 rounded-xl border border-slate-800 mb-5 shadow-lg">
+        <button
+          type="button"
+          onClick={() => {
+            setMode('host');
+            stopScanner();
+          }}
+          className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+            mode === 'host'
+              ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Tv size={13} />
+          <span>Host Workspace</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMode('join')}
+          className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+            mode === 'join'
+              ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Smartphone size={13} />
+          <span>Join Companion</span>
+        </button>
+      </div>
+
+      {/* Main Container Card */}
+      <div className="w-full max-w-sm glass-panel p-6 rounded-2xl flex flex-col gap-5 relative overflow-hidden border border-slate-800 shadow-2xl">
+        {mode === 'host' ? (
+          /* Host Mode View: Display Generated PIN & QR Code */
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="w-full flex flex-col items-center gap-1 p-3.5 bg-purple-500/10 border border-purple-500/20 rounded-xl">
+              <span className="text-[10px] uppercase tracking-wider text-purple-400 font-bold">
+                Your Room Pairing Code
+              </span>
+              <span className="text-3xl font-bold tracking-widest text-purple-300 font-mono">
+                {hostPin}
+              </span>
+            </div>
+
+            {/* QR Code Canvas */}
+            <div className="flex flex-col items-center gap-2">
+              <div className="p-2.5 bg-slate-900 border border-purple-500/30 rounded-xl shadow-lg shadow-purple-500/10">
+                {qrDataUrl ? (
+                  <img
+                    src={qrDataUrl}
+                    alt={`Pairing QR Code for Room ${hostPin}`}
+                    className="w-40 h-40 rounded-lg object-contain"
+                  />
+                ) : (
+                  <div className="w-40 h-40 flex items-center justify-center text-xs text-slate-500">
+                    Generating QR code...
+                  </div>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 max-w-[260px] leading-tight">
+                Scan with your phone camera or enter PIN <span className="font-mono text-purple-300 font-semibold">{hostPin}</span> on another browser
+              </p>
+            </div>
+
+            <div className="w-full flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs font-medium flex items-center justify-center gap-1.5 transition"
+              >
+                {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                <span>{copied ? 'Link Copied!' : 'Copy Link'}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isConnecting}
+                onClick={() => onPair(hostPin)}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition shadow-lg shadow-purple-600/30"
+              >
+                {isConnecting ? (
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Tv size={14} />
+                    <span>Start Room</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        ) : scanning ? (
           /* Scanner Screen View */
           <div className="flex flex-col gap-4">
             <div className="relative aspect-square w-full bg-slate-900 rounded-xl overflow-hidden border border-purple-500/20">
@@ -148,10 +290,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
 
               {/* Scanning crosshairs overlay */}
               <div className="absolute inset-8 border border-purple-500/30 rounded-lg pointer-events-none">
-                {/* Laser scanline animation */}
                 <div className="w-full h-[2px] bg-purple-500 absolute top-0 animate-bounce shadow-[0_0_8px_#a855f7]" style={{ animationDuration: '3s' }} />
-                
-                {/* Corners */}
                 <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-purple-400" />
                 <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-purple-400" />
                 <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-purple-400" />
@@ -221,7 +360,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
         {isConnecting && (
           <div className="flex items-center justify-center gap-2 text-xs text-purple-300 bg-purple-500/10 border border-purple-500/20 p-2.5 rounded-lg">
             <div className="w-3.5 h-3.5 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin shrink-0" />
-            <span>Connecting to Workspace {pin ? `Room ${pin}` : ''}...</span>
+            <span>Connecting to Workspace {pin || (mode === 'host' ? hostPin : '') ? `Room ${pin || hostPin}` : ''}...</span>
           </div>
         )}
 
