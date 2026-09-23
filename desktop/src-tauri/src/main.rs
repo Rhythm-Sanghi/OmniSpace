@@ -1246,7 +1246,6 @@ fn enumerate_macos_windows() -> Vec<WindowInfo> {
   list
 }
 
-#[cfg(target_os = "macos")]
 fn encode_bmp(width: u32, height: u32, bgra: &[u8]) -> Vec<u8> {
   let mut bmp = Vec::with_capacity(14 + 40 + bgra.len());
   let file_size = (14 + 40 + bgra.len()) as u32;
@@ -2070,6 +2069,7 @@ struct XWindowAttributes {
 
 #[cfg(target_os = "linux")]
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct XConfigureEvent {
   r#type: i32,
   serial: u64,
@@ -2088,6 +2088,7 @@ struct XConfigureEvent {
 
 #[cfg(target_os = "linux")]
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct XSelectionRequestEvent {
   r#type: i32,
   serial: u64,
@@ -2103,6 +2104,7 @@ struct XSelectionRequestEvent {
 
 #[cfg(target_os = "linux")]
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct XSelectionEvent {
   r#type: i32,
   serial: u64,
@@ -2117,6 +2119,7 @@ struct XSelectionEvent {
 
 #[cfg(target_os = "linux")]
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct XClientMessageEvent {
   r#type: i32,
   serial: u64,
@@ -2130,6 +2133,7 @@ struct XClientMessageEvent {
 
 #[cfg(target_os = "linux")]
 #[repr(C)]
+#[derive(Copy, Clone)]
 union XEvent {
   r#type: i32,
   configure: XConfigureEvent,
