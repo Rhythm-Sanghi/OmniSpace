@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import { Camera, ShieldAlert, Send, Copy, Check, Tv, Smartphone } from 'lucide-react';
 
 interface PairingScreenProps {
-  onPair: (pin: string) => void;
+  onPair: (pin: string, role?: 'host' | 'join') => void;
   errorMessage: string | null;
   deviceId: string;
   isConnecting?: boolean;
@@ -146,7 +146,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
 
         if (/^\d{6}$/.test(detectedPin)) {
           stopScanner();
-          onPair(detectedPin);
+          onPair(detectedPin, 'join');
           return;
         }
       }
@@ -166,7 +166,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
   const handleManualPair = (e: React.FormEvent) => {
     e.preventDefault();
     if (/^\d{6}$/.test(pin)) {
-      onPair(pin);
+      onPair(pin, 'join');
     }
   };
 
@@ -264,7 +264,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
               <button
                 type="button"
                 disabled={isConnecting}
-                onClick={() => onPair(hostPin)}
+                onClick={() => onPair(hostPin, 'host')}
                 className="flex-1 py-2.5 px-3 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition shadow-lg shadow-purple-600/30"
               >
                 {isConnecting ? (

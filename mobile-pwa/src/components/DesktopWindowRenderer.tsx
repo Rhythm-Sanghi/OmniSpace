@@ -1,10 +1,10 @@
 import React from 'react';
-import { useTouchInputCapture } from '../hooks/useTouchInputCapture.js';
+import { useInputCapture } from '../hooks/useInputCapture.js';
 import { RemoteWindowRenderer, MockOSWindow } from 'ui';
 import { WindowInstance, Device, OmniRTCManager } from 'core';
 import * as Y from 'yjs';
 
-interface MobileWindowRendererProps {
+interface DesktopWindowRendererProps {
   localDeviceId: string;
   localDevice: Device;
   windowState: WindowInstance;
@@ -16,10 +16,14 @@ interface MobileWindowRendererProps {
   rtcManager: OmniRTCManager | null;
   devicesMap: Y.Map<Device>;
   onFocusClick: (windowId: string) => void;
+  onResize?: (windowId: string, width: number, height: number) => void;
+  onToggleMaximize?: (windowId: string) => void;
+  peerConnection?: RTCPeerConnection | null;
+  onFileDrop?: (targetPeerId: string, file: File) => void;
 }
 
-export const MobileWindowRenderer: React.FC<MobileWindowRendererProps> = React.memo((props) => {
-  const touchCaptureListeners = useTouchInputCapture(
+export const DesktopWindowRenderer: React.FC<DesktopWindowRendererProps> = React.memo((props) => {
+  const inputCaptureListeners = useInputCapture(
     props.localDeviceId,
     props.rtcManager,
     props.windowState,
@@ -35,6 +39,8 @@ export const MobileWindowRenderer: React.FC<MobileWindowRendererProps> = React.m
         onDragStart={props.onDragStart || (() => {})}
         onDrag={props.onDrag || (() => {})}
         onDragEnd={props.onDragEnd || (() => {})}
+        onResize={props.onResize}
+        onToggleMaximize={props.onToggleMaximize}
       />
     );
   }
@@ -49,8 +55,12 @@ export const MobileWindowRenderer: React.FC<MobileWindowRendererProps> = React.m
       onDragStart={props.onDragStart}
       onDrag={props.onDrag}
       onDragEnd={props.onDragEnd}
-      inputCaptureListeners={touchCaptureListeners}
+      inputCaptureListeners={inputCaptureListeners}
       onFocusClick={props.onFocusClick}
+      onResize={props.onResize}
+      onToggleMaximize={props.onToggleMaximize}
+      peerConnection={props.peerConnection}
+      onFileDrop={props.onFileDrop}
     />
   );
 });

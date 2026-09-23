@@ -850,14 +850,27 @@ export class OmniRTCManager {
         });
       } else {
         // Create new
+        let initialX = 0;
+        let initialY = 0;
+        const otherDevices = Array.from(devicesMap.values()).filter(
+          (d) => d.id !== this.localDeviceId && d.status === 'connected'
+        );
+        if (otherDevices.length > 0) {
+          const rightmost = otherDevices.reduce(
+            (max, d) => Math.max(max, d.x + d.width),
+            0
+          );
+          initialX = rightmost;
+        }
+
         devicesMap.set(this.localDeviceId, {
           id: this.localDeviceId,
           name: ua,
           width: sWidth,
           height: sHeight,
           dpiScale: sDpi,
-          x: 0,
-          y: 0,
+          x: initialX,
+          y: initialY,
           status: 'connected',
           type: this.deviceType,
         });
