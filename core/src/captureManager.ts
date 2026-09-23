@@ -59,13 +59,10 @@ export class OmniCaptureManager {
       let invokeFn: ((cmd: string, args?: any) => Promise<any>) | null = null;
       if (tauriWin?.__TAURI__ && typeof tauriWin.__TAURI__.invoke === 'function') {
         invokeFn = tauriWin.__TAURI__.invoke;
+      } else if (typeof window !== 'undefined' && (window as any).__TAURI__?.invoke) {
+        invokeFn = (window as any).__TAURI__.invoke;
       } else {
-        try {
-          const tauriApi = await import('@tauri-apps/api/tauri');
-          invokeFn = tauriApi.invoke;
-        } catch {
-          invokeFn = null;
-        }
+        invokeFn = null;
       }
 
       if (invokeFn) {
@@ -248,16 +245,9 @@ export class OmniCaptureManager {
         clearInterval(macHandle.intervalId);
       }
       macHandle.img.src = ''; // Close client connection
-      if (typeof window !== 'undefined') {
-        if ((window as any).__TAURI__ && typeof (window as any).__TAURI__.invoke === 'function') {
-          (window as any).__TAURI__.invoke('stop_macos_capture', { windowId, port: macHandle.port })
-            .catch((err: unknown) => console.error(`[OmniCaptureManager] Failed to stop native capture for window ${windowId}:`, err));
-        } else {
-          import('@tauri-apps/api/tauri').then(({ invoke }) => {
-            invoke('stop_macos_capture', { windowId, port: macHandle.port })
-              .catch((err: unknown) => console.error(`[OmniCaptureManager] Failed to stop native capture for window ${windowId}:`, err));
-          }).catch((err: unknown) => console.error(`[OmniCaptureManager] Failed to import Tauri invoke for stop_macos_capture on window ${windowId}:`, err));
-        }
+      if (typeof window !== 'undefined' && (window as any).__TAURI__?.invoke) {
+        (window as any).__TAURI__.invoke('stop_macos_capture', { windowId, port: macHandle.port })
+          .catch((err: unknown) => console.error(`[OmniCaptureManager] Failed to stop native capture for window ${windowId}:`, err));
       }
       this.macosCaptureHandles.delete(windowId);
     }
