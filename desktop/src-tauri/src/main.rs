@@ -2,6 +2,7 @@
   all(not(debug_assertions), target_os = "windows"),
   windows_subsystem = "windows"
 )]
+#![allow(unused_imports, unused_variables, dead_code, clippy::all)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;

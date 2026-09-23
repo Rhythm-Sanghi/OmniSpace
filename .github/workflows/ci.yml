@@ -57,6 +57,9 @@ jobs:
         with:
           components: clippy
 
+      - name: Ensure desktop dist directory exists
+        run: mkdir -p desktop/dist
+
       - name: Check Rust Code
         run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
 
