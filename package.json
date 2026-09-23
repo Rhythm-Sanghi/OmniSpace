@@ -20,6 +20,7 @@
     "dev:signaling": "npm run dev -w signaling-server",
     "dev:desktop": "npm run dev -w desktop",
     "dev:pwa": "npm run dev -w mobile-pwa",
+    "build": "npm run build -w mobile-pwa",
     "build:all": "npm run build -w signaling-server && npm run build -w desktop && npm run build -w mobile-pwa",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
