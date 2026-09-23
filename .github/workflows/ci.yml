@@ -63,8 +63,16 @@ jobs:
           echo '<!DOCTYPE html><html><head><title>OmniSpace</title></head><body><div id="root"></div></body></html>' > desktop/dist/index.html
 
       - name: Check Rust Code
-        run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
+        run: |
+          cargo check --manifest-path desktop/src-tauri/Cargo.toml --verbose 2>&1 | tee cargo-check.log || {
+            head -n 40 cargo-check.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }
 
       - name: Run Clippy
-        run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
+        run: |
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings 2>&1 | tee cargo-clippy.log || {
+            head -n 40 cargo-clippy.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }
 
