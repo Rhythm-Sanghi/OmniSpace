@@ -17,11 +17,13 @@
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "qrcode": "^1.5.4",
     "ui": "*",
     "yjs": "^13.6.20"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.6.0",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",

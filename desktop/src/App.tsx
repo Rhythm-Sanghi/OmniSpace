@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
-import { Plus, Terminal, Wifi, ShieldAlert, Tv, Clipboard } from 'lucide-react';
+import { Plus, Terminal, Wifi, ShieldAlert, Tv, Clipboard, QrCode } from 'lucide-react';
 import {
   getDeviceId,
   initOmniDoc,
@@ -38,6 +38,7 @@ import { useNativeWindowTracking } from './hooks/useNativeWindowTracking.js';
 import { useClipboardWatcher } from './hooks/useClipboardWatcher.js';
 import { PermissionOnboarding } from './components/PermissionOnboarding.js';
 import { WorkspaceViewport } from './components/WorkspaceViewport.js';
+import { PairingQRCodeModal } from './components/PairingQRCodeModal.js';
 
 // Pre-allocated static fallback to prevent object allocation in empty-map states
 const EMPTY_DEVICES_MAP = new Y.Map<Device>();
@@ -77,6 +78,7 @@ export default function App() {
   const [discoveredPeers, setDiscoveredPeers] = useState<LocalDiscoveryBeacon[]>([]);
   const [showClipboardDrawer, setShowClipboardDrawer] = useState(false);
   const [clipboardHistory, setClipboardHistory] = useState<ClipboardHistoryItem[]>([]);
+  const [showQRModal, setShowQRModal] = useState(false);
 
   const handleWindowResize = useCallback((windowId: string, width: number, height: number) => {
     if (!docRef.current) return;
@@ -743,6 +745,17 @@ export default function App() {
             <span>Clipboard</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() => setShowQRModal(true)}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center gap-1.5 text-xs border border-slate-700/80"
+            title="Pair Mobile / QR Code"
+            aria-label="Open pairing QR code"
+          >
+            <QrCode size={13} className="text-purple-400" />
+            <span>QR Code</span>
+          </button>
+
           {connected ? (
             <>
               <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3 py-1 rounded-full text-xs font-medium">
@@ -780,6 +793,14 @@ export default function App() {
                 <div className="flex flex-col items-center gap-1 p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl text-center">
                   <span className="text-[10px] uppercase tracking-wider text-purple-400 font-bold">Suggested Pairing PIN</span>
                   <span className="text-2xl font-bold tracking-widest text-purple-300 font-mono">{pin}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowQRModal(true)}
+                    className="mt-2 text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/30 transition w-full justify-center font-medium"
+                  >
+                    <QrCode size={13} />
+                    <span>Scan QR Code to Pair</span>
+                  </button>
                 </div>
 
                 <div className="flex flex-col gap-2">
@@ -1007,6 +1028,13 @@ export default function App() {
         onSelect={(item) => {
           navigator.clipboard?.writeText(item.content).catch(() => {});
         }}
+      />
+
+      {/* Mobile Pairing QR Code Modal */}
+      <PairingQRCodeModal
+        isOpen={showQRModal}
+        onClose={() => setShowQRModal(false)}
+        roomPin={roomPin || pin}
       />
     </div>
   );

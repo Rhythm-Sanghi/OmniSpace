@@ -165,6 +165,17 @@ export default function App() {
     };
   }, []);
 
+  // Auto-pair if PIN is provided in URL query string (e.g. from scanned QR code)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search) {
+      const params = new URLSearchParams(window.location.search);
+      const pinParam = params.get('pin');
+      if (pinParam && /^\d{6}$/.test(pinParam) && !connected && !isConnecting && !rtcManagerRef.current && docRef.current && awarenessRef.current) {
+        handlePair(pinParam);
+      }
+    }
+  }, [connected, isConnecting]);
+
   const handlePair = (pin: string) => {
     if (connected || isConnecting || rtcManagerRef.current) return;
     setIsConnecting(true);
