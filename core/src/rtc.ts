@@ -2,6 +2,22 @@ import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import { Device, WindowInstance, SignalingPayload } from './types.js';
 import { reassignDisconnectedDeviceWindows } from './handoffEngine.js';
+import {
+  MSG_MOUSE_INPUT,
+  MSG_KEYBOARD_INPUT,
+  MSG_FILE_TRANSFER,
+  isValidInputEventEnvelope,
+  isValidQualityFeedback,
+  isValidFileTransferPayload,
+  InputEventEnvelope,
+  QualityFeedback,
+} from './inputProtocol.js';
+import {
+  FileTransferSender,
+  FileTransferReceiver,
+  TransferProgress,
+  ReceivedFile,
+} from './fileTransfer.js';
 
 // Message types prefix for binary data channel multiplexing
 export const MSG_DOC_UPDATE = 0;
@@ -11,7 +27,10 @@ export const MSG_AWARENESS = 3;
 export const MSG_PING = 4;
 export const MSG_PONG = 5;
 export const MSG_QUALITY_FEEDBACK = 6;
-import { MSG_MOUSE_INPUT, MSG_KEYBOARD_INPUT } from './inputProtocol.js';
+const textDecoder = new TextDecoder();
+const textEncoder = new TextEncoder();
+
+export { MSG_MOUSE_INPUT, MSG_KEYBOARD_INPUT, MSG_FILE_TRANSFER };
 
 // Define a type for Vite env to prevent compile errors
 declare global {
@@ -26,30 +45,47 @@ export class OmniRTCManager {
     string,
     {
       pc: RTCPeerConnection;
-      docChannel: RTCDataChannel;
-      awarenessChannel: RTCDataChannel;
+      docChannel: RTCDataChannel | null;
+      awarenessChannel: RTCDataChannel | null;
       missedPings: number;
-      pingInterval?: any;
+      pingInterval?: ReturnType<typeof setInterval>;
       handshakeResolved: boolean;
+      candidateQueue: RTCIceCandidateInit[];
+      isMakingOffer: boolean;
     }
   > = new Map();
 
   private pendingHandshakes: Set<string> = new Set();
-  private handshakeTimer: any = null;
-  private graceTimers: Map<string, any> = new Map();
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private graceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private graceCheckInterval: ReturnType<typeof setInterval> | null = null;
   private isDestroyed = false;
+  private isConnecting = false;
+  private sessionToken: string | null = null;
   private iceServers: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
   ];
+  private iceServersPromise: Promise<void> | null = null;
+  private docUpdateListener: (update: Uint8Array, origin: any) => void;
+  private awarenessUpdateListener: (args: any) => void;
 
   public onRemoteTrackReceived?: (peerId: string, stream: MediaStream) => void;
+  public onRemoteTrackRemoved?: (peerId: string, streamId: string) => void;
   public onQualityFeedbackReceived?: (
     peerId: string,
-    feedback: { windowId: string; maxBitrate?: number; maxFramerate?: number }
+    feedback: QualityFeedback
   ) => void;
-  public onMouseInputReceived?: (peerId: string, event: any) => void;
-  public onKeyboardInputReceived?: (peerId: string, event: any) => void;
+  public onMouseInputReceived?: (peerId: string, envelope: InputEventEnvelope) => void;
+  public onKeyboardInputReceived?: (peerId: string, envelope: InputEventEnvelope) => void;
+  public onSignalingError?: (error: { message: string }) => void;
+  public onFileTransferProgress?: (peerId: string, progress: TransferProgress) => void;
+  public onFileReceived?: (peerId: string, file: ReceivedFile) => void;
+  public onFileTransferAbort?: (peerId: string, transferId: string, reason?: string) => void;
+
+  private fileReceiver = new FileTransferReceiver();
+  private fileSender = new FileTransferSender();
 
   constructor(
     public readonly localDeviceId: string,
@@ -59,66 +95,139 @@ export class OmniRTCManager {
     public readonly doc: Y.Doc,
     public readonly awareness: awarenessProtocol.Awareness
   ) {
-    // Bind Yjs Doc updates to transmit over WebRTC doc data channels
-    this.doc.on('update', (update: Uint8Array, origin: any) => {
-      if (origin !== 'remote') {
+    this.docUpdateListener = (update: Uint8Array, origin: any) => {
+      // Avoid echo loops: don't broadcast updates that came from remote peers
+      if (origin !== 'remote' && origin !== 'handshake-sync') {
         const payload = new Uint8Array(update.length + 1);
         payload[0] = MSG_DOC_UPDATE;
         payload.set(update, 1);
         this.broadcastDocChannel(payload);
       }
-    });
+    };
+    this.doc.on('update', this.docUpdateListener);
 
-    // Bind Yjs Awareness updates
-    this.awareness.on('update', ({ added, updated, removed }: any) => {
+    this.awarenessUpdateListener = ({ added, updated, removed }: any) => {
       const changedClients = [...added, ...updated, ...removed];
-      if (changedClients.length > 0) {
-        const update = awarenessProtocol.encodeAwarenessUpdate(this.awareness, changedClients);
-        const payload = new Uint8Array(update.length + 1);
-        payload[0] = MSG_AWARENESS;
-        payload.set(update, 1);
-        this.broadcastAwarenessChannel(payload);
-      }
-    });
+      const update = awarenessProtocol.encodeAwarenessUpdate(this.awareness, changedClients);
+      const payload = new Uint8Array(update.length + 1);
+      payload[0] = MSG_AWARENESS;
+      payload.set(update, 1);
+      this.broadcastAwarenessChannel(payload);
+    };
+    this.awareness.on('update', this.awarenessUpdateListener);
 
-    // Setup periodic coordinator grace check interval
-    setInterval(() => {
+    // Initial check for any devices currently disconnected with un-expired grace windows
+    this.recheckGracePeriods();
+
+    // Check periodically for grace period expiry
+    this.graceCheckInterval = setInterval(() => {
       if (this.isDestroyed) return;
       this.recheckGracePeriods();
     }, 5000);
   }
 
-  public connect() {
-    fetch(
-      'https://flash-speaker.metered.live/api/v1/turn/credentials?apiKey=e1f1ec7096e60451ff79174eba025c2ecd46'
-    )
-      .then((response) => {
-        if (!response.ok) return null;
-        return response.json();
-      })
-      .then((credentials) => {
-        if (Array.isArray(credentials) && credentials.length > 0) {
-          this.iceServers = credentials;
+  /**
+   * Connects to signaling server and resolves dynamic TURN credentials.
+   */
+  public connect(): void {
+    if (this.isDestroyed || this.isConnecting) return;
+    this.isConnecting = true;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    // Start dynamic TURN configuration retrieval
+    this.iceServersPromise = this.initIceServers().catch((err) => {
+      console.warn('[RTC] Failed to initialize dynamic TURN servers, falling back to default STUN:', err);
+    }).finally(() => {
+      this.isConnecting = false;
+    });
+
+    if (this.isDestroyed) {
+      this.isConnecting = false;
+      return;
+    }
+
+    this.initWebSocket();
+  }
+
+  private async initIceServers(): Promise<void> {
+    // In test environments where WebSocket or RTCPeerConnection is mocked, do not perform unmocked HTTP fetch
+    if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
+      return;
+    }
+
+    // Resolve HTTP relay URL from signaling WebSocket URL (e.g. ws://host:port -> http://host:port/api/turn-credentials)
+    let relayUrl: string | null = null;
+    try {
+      const wsUrl = new URL(this.signalingUrl);
+      const httpProtocol = wsUrl.protocol === 'wss:' ? 'https:' : 'http:';
+      relayUrl = `${httpProtocol}//${wsUrl.host}/api/turn-credentials`;
+    } catch {
+      relayUrl = null;
+    }
+
+    if (relayUrl && typeof fetch === 'function') {
+      try {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
+
+        const res = await fetch(relayUrl, {
+          signal: controller ? controller.signal : undefined,
+        });
+
+        if (timeoutId) clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+            this.iceServers = data.iceServers;
+            return;
+          }
         }
-      })
-      .catch((err) => {
-        console.warn('Failed to fetch dynamic TURN credentials, using default STUN:', err);
-      });
+      } catch (err: any) {
+        console.debug('[RTC] Signaling server TURN relay query did not complete, using defaults:', err?.message || err);
+      }
+    }
+  }
+
+  private reconnectAttempts = 0;
+
+  private initWebSocket() {
+    if (this.isDestroyed) return;
+
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        // Socket already closed
+      }
+      this.ws = null;
+    }
 
     this.ws = new WebSocket(this.signalingUrl);
 
     this.ws.onopen = () => {
+      this.reconnectAttempts = 0;
       this.ws?.send(
         JSON.stringify({
           type: 'join-room',
           senderPeerId: this.localDeviceId,
-          payload: { roomPin: this.roomPin },
+          payload: { roomPin: this.roomPin, sessionToken: this.sessionToken },
         })
       );
     };
 
     this.ws.onmessage = async (event) => {
-      const msg: SignalingPayload = JSON.parse(event.data);
+      let msg: SignalingPayload;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (err) {
+        console.error('[RTC] Malformed signaling payload:', err);
+        return;
+      }
 
       // Dev-only test seam check (Vite strips this in production dead-code elimination)
       if ((import.meta as any).env?.DEV && typeof window !== 'undefined' && window.debugIgnorePeerIds?.includes(msg.senderPeerId)) {
@@ -127,6 +236,9 @@ export class OmniRTCManager {
 
       switch (msg.type) {
         case 'room-roster':
+          if (msg.payload && (msg.payload as any).sessionToken) {
+            this.sessionToken = (msg.payload as any).sessionToken;
+          }
           this.handleRoomRoster(msg.payload.peers);
           break;
         case 'peer-joined':
@@ -145,13 +257,31 @@ export class OmniRTCManager {
         case 'ice-candidate':
           this.handleIceCandidate(msg.senderPeerId, msg.payload.candidate);
           break;
+        case 'error':
+          console.error('[RTC] Signaling server error:', msg.payload?.message || msg.payload);
+          this.onSignalingError?.(msg.payload || { message: 'Unknown signaling error' });
+          break;
       }
     };
 
     this.ws.onclose = () => {
       if (!this.isDestroyed) {
-        // Reconnect after 3s delay
-        setTimeout(() => this.connect(), 3000);
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        // Jittered exponential backoff
+        const baseDelay = 1000;
+        const maxDelay = 30000;
+        const factor = 1.5;
+        const expDelay = Math.min(maxDelay, baseDelay * Math.pow(factor, this.reconnectAttempts));
+        const jitter = (Math.random() - 0.5) * 500;
+        const delay = Math.max(baseDelay, Math.floor(expDelay + jitter));
+        this.reconnectAttempts++;
+
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          if (!this.isDestroyed) {
+            this.connect();
+          }
+        }, delay);
       }
     };
   }
@@ -173,6 +303,10 @@ export class OmniRTCManager {
     });
 
     // Setup 10-second timeout to unblock dimension reporting if a peer fails to connect
+    if (this.handshakeTimer) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
     this.handshakeTimer = setTimeout(() => {
       if (this.pendingHandshakes.size > 0) {
         this.pendingHandshakes.clear();
@@ -187,6 +321,7 @@ export class OmniRTCManager {
   }
 
   private handlePeerLeft(peerId: string) {
+    if (this.isDestroyed) return;
     this.closePeerConnection(peerId);
     this.pendingHandshakes.delete(peerId);
     this.checkHandshakesComplete();
@@ -197,18 +332,88 @@ export class OmniRTCManager {
     const peer = this.peerConnections.get(peerId);
     if (peer) {
       clearInterval(peer.pingInterval);
-      peer.pc.close();
+      peer.candidateQueue = [];
+      try {
+        peer.pc.close();
+      } catch (err) {
+        console.debug('Error closing peer connection:', err);
+      }
       this.peerConnections.delete(peerId);
+      if (this.onRemoteTrackRemoved) {
+        this.onRemoteTrackRemoved(peerId, '');
+      }
     }
   }
 
-  private async initiateConnection(targetPeerId: string) {
-    // Initiator disposal of previous connections
-    this.closePeerConnection(targetPeerId);
-
+  private _createPeerConnection(peerId: string) {
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers,
     });
+
+    const peerState = {
+      pc,
+      docChannel: null as RTCDataChannel | null,
+      awarenessChannel: null as RTCDataChannel | null,
+      missedPings: 0,
+      handshakeResolved: false,
+      candidateQueue: [] as RTCIceCandidateInit[],
+      isMakingOffer: false,
+    };
+    this.peerConnections.set(peerId, peerState);
+
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[RTC ICE] Peer ${peerId} connectionState: ${pc.iceConnectionState}`);
+    };
+    pc.onsignalingstatechange = () => {
+      console.log(`[RTC Signaling] Peer ${peerId} signalingState: ${pc.signalingState}`);
+    };
+
+    // Apply dynamic TURN credentials if promise resolves later
+    if (this.iceServersPromise) {
+      this.iceServersPromise.then(() => {
+        if (!this.isDestroyed && this.peerConnections.get(peerId) === peerState) {
+          if (typeof (pc as any).setConfiguration === 'function') {
+            (pc as any).setConfiguration({ iceServers: this.iceServers });
+          }
+        }
+      }).catch(() => {});
+    }
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.ws?.send(
+          JSON.stringify({
+            type: 'ice-candidate',
+            senderPeerId: this.localDeviceId,
+            targetPeerId: peerId,
+            payload: { candidate: event.candidate },
+          })
+        );
+      }
+    };
+
+    pc.ontrack = (event) => {
+      const stream = event.streams[0] || new MediaStream([event.track]);
+      if (this.onRemoteTrackReceived) {
+        this.onRemoteTrackReceived(peerId, stream);
+      }
+      event.track.onended = () => {
+        if (this.onRemoteTrackRemoved) {
+          this.onRemoteTrackRemoved(peerId, stream.id);
+        }
+      };
+    };
+
+    return { pc, peerState };
+  }
+
+  private async initiateConnection(targetPeerId: string) {
+    if (this.isDestroyed) return;
+
+    // Initiator disposal of previous connections
+    this.closePeerConnection(targetPeerId);
+
+    const { pc, peerState } = this._createPeerConnection(targetPeerId);
 
     // Create reliable/ordered data channel for Yjs
     const docChannel = pc.createDataChannel('omni-doc', {
@@ -221,32 +426,19 @@ export class OmniRTCManager {
       maxRetransmits: 0,
     });
 
-    this.peerConnections.set(targetPeerId, {
-      pc,
-      docChannel,
-      awarenessChannel,
-      missedPings: 0,
-      handshakeResolved: false,
-    });
+    peerState.docChannel = docChannel;
+    peerState.awarenessChannel = awarenessChannel;
 
     this.setupDataChannelListeners(docChannel, awarenessChannel, targetPeerId);
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        this.ws?.send(
-          JSON.stringify({
-            type: 'ice-candidate',
-            senderPeerId: this.localDeviceId,
-            targetPeerId,
-            payload: { candidate: event.candidate },
-          })
-        );
-      }
-    };
-
+    // Single source of truth for ongoing renegotiation (e.g. tracks added/removed)
     pc.onnegotiationneeded = async () => {
+      if (peerState.isMakingOffer || pc.signalingState !== 'stable') return;
+      if (this.isDestroyed || this.peerConnections.get(targetPeerId) !== peerState) return;
       try {
+        peerState.isMakingOffer = true;
         const offer = await pc.createOffer();
+        if (pc.signalingState !== 'stable' || this.peerConnections.get(targetPeerId) !== peerState) return;
         const mungedOffer = prioritizeHardwareCodecs(offer);
         await pc.setLocalDescription(mungedOffer);
         this.ws?.send(
@@ -259,126 +451,140 @@ export class OmniRTCManager {
         );
       } catch (err) {
         console.error('Renegotiation offer error:', err);
+      } finally {
+        peerState.isMakingOffer = false;
       }
     };
 
-    pc.ontrack = (event) => {
-      if (this.onRemoteTrackReceived && event.streams[0]) {
-        this.onRemoteTrackReceived(targetPeerId, event.streams[0]);
-      }
-    };
+    // Initial connection offer dispatch
+    try {
+      peerState.isMakingOffer = true;
+      const offer = await pc.createOffer();
+      if (this.isDestroyed || this.peerConnections.get(targetPeerId) !== peerState) return;
+      const mungedOffer = prioritizeHardwareCodecs(offer);
+      await pc.setLocalDescription(mungedOffer);
 
-    const offer = await pc.createOffer();
-    const mungedOffer = prioritizeHardwareCodecs(offer);
-    await pc.setLocalDescription(mungedOffer);
-
-    this.ws?.send(
-      JSON.stringify({
-        type: 'offer',
-        senderPeerId: this.localDeviceId,
-        targetPeerId,
-        payload: { offer: mungedOffer },
-      })
-    );
-  }
-
-  private async handleOffer(senderPeerId: string, offer: any) {
-    // Callee disposal of old connection
-    this.closePeerConnection(senderPeerId);
-
-    const pc = new RTCPeerConnection({
-      iceServers: this.iceServers,
-    });
-
-    const peerState = {
-      pc,
-      docChannel: null as any,
-      awarenessChannel: null as any,
-      missedPings: 0,
-      handshakeResolved: false,
-    };
-    this.peerConnections.set(senderPeerId, peerState);
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        this.ws?.send(
-          JSON.stringify({
-            type: 'ice-candidate',
-            senderPeerId: this.localDeviceId,
-            targetPeerId: senderPeerId,
-            payload: { candidate: event.candidate },
-          })
-        );
-      }
-    };
-
-    pc.onnegotiationneeded = async () => {
-      try {
-        const offer = await pc.createOffer();
-        const mungedOffer = prioritizeHardwareCodecs(offer);
-        await pc.setLocalDescription(mungedOffer);
-        this.ws?.send(
-          JSON.stringify({
-            type: 'offer',
-            senderPeerId: this.localDeviceId,
-            targetPeerId: senderPeerId,
-            payload: { offer: mungedOffer },
-          })
-        );
-      } catch (err) {
-        console.error('Renegotiation offer error:', err);
-      }
-    };
-
-    pc.ontrack = (event) => {
-      if (this.onRemoteTrackReceived && event.streams[0]) {
-        this.onRemoteTrackReceived(senderPeerId, event.streams[0]);
-      }
-    };
-
-    pc.ondatachannel = (event) => {
-      const channel = event.channel;
-      if (channel.label === 'omni-doc') {
-        peerState.docChannel = channel;
-      } else if (channel.label === 'omni-awareness') {
-        peerState.awarenessChannel = channel;
-      }
-
-      if (peerState.docChannel && peerState.awarenessChannel) {
-        this.setupDataChannelListeners(
-          peerState.docChannel,
-          peerState.awarenessChannel,
-          senderPeerId
-        );
-      }
-    };
-
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await pc.createAnswer();
-    const mungedAnswer = prioritizeHardwareCodecs(answer);
-    await pc.setLocalDescription(mungedAnswer);
-
-    this.ws?.send(
-      JSON.stringify({
-        type: 'answer',
-        senderPeerId: this.localDeviceId,
-        targetPeerId: senderPeerId,
-        payload: { answer: mungedAnswer },
-      })
-    );
-  }
-
-  private async handleAnswer(senderPeerId: string, answer: any) {
-    const peer = this.peerConnections.get(senderPeerId);
-    if (peer) {
-      await peer.pc.setRemoteDescription(new RTCSessionDescription(answer));
+      this.ws?.send(
+        JSON.stringify({
+          type: 'offer',
+          senderPeerId: this.localDeviceId,
+          targetPeerId,
+          payload: { offer: mungedOffer },
+        })
+      );
+    } catch (err) {
+      console.error('Failed to create initial offer:', err);
+    } finally {
+      peerState.isMakingOffer = false;
     }
   }
 
-  private handleIceCandidate(senderPeerId: string, candidate: any) {
+  private async handleOffer(senderPeerId: string, offer: RTCSessionDescriptionInit) {
+    if (this.isDestroyed) return;
+
+    const peerEntry = this.peerConnections.get(senderPeerId);
+    let pc: RTCPeerConnection;
+    let peerState: NonNullable<typeof peerEntry>;
+
+    // If an active connection already exists, reuse it for renegotiation
+    if (peerEntry && peerEntry.pc.signalingState !== 'closed') {
+      pc = peerEntry.pc;
+      peerState = peerEntry;
+    } else {
+      this.closePeerConnection(senderPeerId);
+      const created = this._createPeerConnection(senderPeerId);
+      pc = created.pc;
+      peerState = created.peerState;
+
+      pc.ondatachannel = (event) => {
+        const channel = event.channel;
+        if (channel.label === 'omni-doc') {
+          peerState.docChannel = channel;
+        } else if (channel.label === 'omni-awareness') {
+          peerState.awarenessChannel = channel;
+        }
+
+        if (peerState.docChannel && peerState.awarenessChannel) {
+          this.setupDataChannelListeners(
+            peerState.docChannel,
+            peerState.awarenessChannel,
+            senderPeerId
+          );
+        }
+      };
+    }
+
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      if (this.isDestroyed || this.peerConnections.get(senderPeerId) !== peerState) return;
+
+      // Flush any queued early-arrived ICE candidates
+      await this.flushCandidateQueue(senderPeerId);
+      if (this.isDestroyed || this.peerConnections.get(senderPeerId) !== peerState) return;
+
+      const answer = await pc.createAnswer();
+      if (this.isDestroyed || this.peerConnections.get(senderPeerId) !== peerState) return;
+
+      const mungedAnswer = prioritizeHardwareCodecs(answer);
+      await pc.setLocalDescription(mungedAnswer);
+
+      this.ws?.send(
+        JSON.stringify({
+          type: 'answer',
+          senderPeerId: this.localDeviceId,
+          targetPeerId: senderPeerId,
+          payload: { answer: mungedAnswer },
+        })
+      );
+    } catch (err) {
+      console.error('Failed to handle incoming offer:', err);
+    }
+  }
+
+  private async handleAnswer(senderPeerId: string, answer: RTCSessionDescriptionInit) {
+    if (this.isDestroyed) return;
     const peer = this.peerConnections.get(senderPeerId);
     if (peer) {
-      peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      try {
+        await peer.pc.setRemoteDescription(new RTCSessionDescription(answer));
+        // Flush any queued early-arrived ICE candidates
+        await this.flushCandidateQueue(senderPeerId);
+      } catch (err) {
+        console.error('Failed to set remote answer description:', err);
+      }
+    }
+  }
+
+  private async handleIceCandidate(senderPeerId: string, candidate: RTCIceCandidateInit) {
+    const peer = this.peerConnections.get(senderPeerId);
+    if (!peer) return;
+
+    // Buffer candidate if remoteDescription has not been applied yet
+    if (!peer.pc.remoteDescription) {
+      peer.candidateQueue.push(candidate);
+      return;
+    }
+
+    try {
+      await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.warn('Failed to add incoming ICE candidate:', err);
+    }
+  }
+
+  private async flushCandidateQueue(peerId: string) {
+    const peer = this.peerConnections.get(peerId);
+    if (!peer || peer.candidateQueue.length === 0) return;
+
+    const queued = [...peer.candidateQueue];
+    peer.candidateQueue = [];
+
+    for (const cand of queued) {
+      try {
+        await peer.pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (err) {
+        console.warn('Failed to add queued ICE candidate:', err);
+      }
     }
   }
 
@@ -447,10 +653,14 @@ export class OmniRTCManager {
         }
         case MSG_QUALITY_FEEDBACK: {
           try {
-            const text = new TextDecoder().decode(payload);
+            const text = textDecoder.decode(payload);
             const feedback = JSON.parse(text);
-            if (this.onQualityFeedbackReceived) {
-              this.onQualityFeedbackReceived(peerId, feedback);
+            if (isValidQualityFeedback(feedback)) {
+              if (this.onQualityFeedbackReceived) {
+                this.onQualityFeedbackReceived(peerId, feedback);
+              }
+            } else {
+              console.warn('[RTC Security] Dropping malformed quality feedback packet from peer', peerId);
             }
           } catch (err) {
             console.error('Failed to parse quality feedback packet:', err);
@@ -459,13 +669,36 @@ export class OmniRTCManager {
         }
         case MSG_KEYBOARD_INPUT: {
           try {
-            const text = new TextDecoder().decode(payload);
+            const text = textDecoder.decode(payload);
             const envelope = JSON.parse(text);
-            if (this.onKeyboardInputReceived) {
-              this.onKeyboardInputReceived(peerId, envelope);
+            if (isValidInputEventEnvelope(envelope)) {
+              if (this.onKeyboardInputReceived) {
+                this.onKeyboardInputReceived(peerId, envelope);
+              }
+            } else {
+              console.warn('[RTC Security] Dropping malformed keyboard input packet from peer', peerId);
             }
           } catch (err) {
             console.error('Failed to parse keyboard input packet:', err);
+          }
+          break;
+        }
+        case MSG_FILE_TRANSFER: {
+          try {
+            const text = textDecoder.decode(payload);
+            const transferPayload = JSON.parse(text);
+            if (isValidFileTransferPayload(transferPayload)) {
+              this.fileReceiver.handlePayload(
+                transferPayload,
+                (prog) => this.onFileTransferProgress?.(peerId, prog),
+                (file) => this.onFileReceived?.(peerId, file),
+                (tid, reason) => this.onFileTransferAbort?.(peerId, tid, reason)
+              );
+            } else {
+              console.warn('[RTC Security] Dropping malformed file transfer packet from peer', peerId);
+            }
+          } catch (err) {
+            console.error('Failed to parse file transfer packet:', err);
           }
           break;
         }
@@ -473,7 +706,11 @@ export class OmniRTCManager {
     };
 
     docChannel.onclose = () => {
-      this.handlePeerLeft(peerId);
+      queueMicrotask(() => {
+        if (!this.isDestroyed) {
+          this.handlePeerLeft(peerId);
+        }
+      });
     };
 
     // 2. Setup Awareness Channel
@@ -496,10 +733,14 @@ export class OmniRTCManager {
         awarenessProtocol.applyAwarenessUpdate(this.awareness, payload, 'remote');
       } else if (msgType === MSG_MOUSE_INPUT) {
         try {
-          const text = new TextDecoder().decode(payload);
+          const text = textDecoder.decode(payload);
           const envelope = JSON.parse(text);
-          if (this.onMouseInputReceived) {
-            this.onMouseInputReceived(peerId, envelope);
+          if (isValidInputEventEnvelope(envelope)) {
+            if (this.onMouseInputReceived) {
+              this.onMouseInputReceived(peerId, envelope);
+            }
+          } else {
+            console.warn('[RTC Security] Dropping malformed mouse input packet from peer', peerId);
           }
         } catch (err) {
           console.error('Failed to parse mouse input packet:', err);
@@ -508,12 +749,12 @@ export class OmniRTCManager {
     };
   }
 
-  public sendMouseInput(targetPeerId: string, envelope: any) {
+  public sendMouseInput(targetPeerId: string, envelope: InputEventEnvelope) {
     const peer = this.peerConnections.get(targetPeerId);
-    if (!peer || peer.awarenessChannel.readyState !== 'open') return;
+    if (!peer || !peer.awarenessChannel || peer.awarenessChannel.readyState !== 'open') return;
 
     const text = JSON.stringify(envelope);
-    const textBytes = new TextEncoder().encode(text);
+    const textBytes = textEncoder.encode(text);
     const payload = new Uint8Array(textBytes.length + 1);
     payload[0] = MSG_MOUSE_INPUT;
     payload.set(textBytes, 1);
@@ -521,17 +762,41 @@ export class OmniRTCManager {
     peer.awarenessChannel.send(payload);
   }
 
-  public sendKeyboardInput(targetPeerId: string, envelope: any) {
+  public sendKeyboardInput(targetPeerId: string, envelope: InputEventEnvelope) {
     const peer = this.peerConnections.get(targetPeerId);
-    if (!peer || peer.docChannel.readyState !== 'open') return;
+    if (!peer || !peer.docChannel || peer.docChannel.readyState !== 'open') return;
 
     const text = JSON.stringify(envelope);
-    const textBytes = new TextEncoder().encode(text);
+    const textBytes = textEncoder.encode(text);
     const payload = new Uint8Array(textBytes.length + 1);
     payload[0] = MSG_KEYBOARD_INPUT;
     payload.set(textBytes, 1);
 
     peer.docChannel.send(payload);
+  }
+
+  public async sendFile(
+    targetPeerId: string,
+    file: { name: string; size: number; mimeType?: string; data: Uint8Array },
+    onProgress?: (progress: TransferProgress) => void
+  ): Promise<string> {
+    const peer = this.peerConnections.get(targetPeerId);
+    if (!peer || !peer.docChannel || peer.docChannel.readyState !== 'open') {
+      throw new Error(`Data channel to peer ${targetPeerId} is not open`);
+    }
+
+    return this.fileSender.sendFile(
+      file,
+      (payload) => {
+        const text = JSON.stringify(payload);
+        const textBytes = textEncoder.encode(text);
+        const buffer = new Uint8Array(textBytes.length + 1);
+        buffer[0] = MSG_FILE_TRANSFER;
+        buffer.set(textBytes, 1);
+        peer.docChannel!.send(buffer);
+      },
+      onProgress
+    );
   }
 
   private sendPing(peerId: string) {
@@ -547,7 +812,7 @@ export class OmniRTCManager {
     peer.missedPings++;
     const ping = new Uint8Array(1);
     ping[0] = MSG_PING;
-    if (peer.docChannel.readyState === 'open') {
+    if (peer.docChannel && peer.docChannel.readyState === 'open') {
       peer.docChannel.send(ping);
     }
   }
@@ -601,7 +866,10 @@ export class OmniRTCManager {
   }
 
   private pruneDisconnectedPeer(peerId: string) {
-    // 1. Instant awareness cleanup
+    // 1. Evaluate coordinator cleanup role first to persist CRDT disconnect status
+    this.evaluateCoordinator(peerId);
+
+    // 2. Instant awareness cleanup
     // Find all clientIds associated with this deviceId in awareness states
     const states = this.awareness.getStates();
     const clientIdsToPrune: number[] = [];
@@ -613,9 +881,6 @@ export class OmniRTCManager {
     if (clientIdsToPrune.length > 0) {
       awarenessProtocol.removeAwarenessStates(this.awareness, clientIdsToPrune, 'disconnect');
     }
-
-    // 2. Evaluate coordinator cleanup role
-    this.evaluateCoordinator(peerId);
   }
 
   private evaluateCoordinator(disconnectedPeerId?: string) {
@@ -646,63 +911,75 @@ export class OmniRTCManager {
             reassignDisconnectedDeviceWindows(disconnectedPeerId, devicesMap, this.doc.getMap<WindowInstance>('windows'));
           }
         }
-
-        // Resiliently schedule/evaluate all grace window timers
-        this.recheckGracePeriods();
       });
+
+      // Resiliently schedule/evaluate all grace window timers OUTSIDE the transaction
+      this.recheckGracePeriods();
     }
   }
 
   private recheckGracePeriods() {
     // Coordinator check only
     const devicesMap = this.doc.getMap<Device>('devices');
-    const devices = Array.from(devicesMap.values());
-    const activePeers = devices.filter((d) => d.status === 'connected');
-    if (activePeers.length === 0) return;
+    let minConnectedId: string | null = null;
 
-    const sorted = [...activePeers].sort((a, b) => a.id.localeCompare(b.id));
-    if (sorted[0].id !== this.localDeviceId) {
+    for (const dev of devicesMap.values()) {
+      if (dev.status === 'connected') {
+        if (minConnectedId === null || dev.id.localeCompare(minConnectedId) < 0) {
+          minConnectedId = dev.id;
+        }
+      }
+    }
+
+    if (!minConnectedId || minConnectedId !== this.localDeviceId) {
       // Not coordinator, cancel any local grace timers we hold
-      this.graceTimers.forEach((timer) => clearTimeout(timer));
-      this.graceTimers.clear();
+      if (this.graceTimers.size > 0) {
+        this.graceTimers.forEach((timer) => clearTimeout(timer));
+        this.graceTimers.clear();
+      }
       return;
     }
 
     const now = Date.now();
-    devices.forEach((dev) => {
+    for (const dev of devicesMap.values()) {
       if (dev.status !== 'disconnected' || !dev.disconnectedAt) {
-        if (this.graceTimers.has(dev.id)) {
-          clearTimeout(this.graceTimers.get(dev.id));
+        const activeTimer = this.graceTimers.get(dev.id);
+        if (activeTimer) {
+          clearTimeout(activeTimer);
           this.graceTimers.delete(dev.id);
         }
-        return;
+        continue;
       }
 
       const elapsed = now - dev.disconnectedAt;
       if (elapsed >= 120000) {
-        // Grace period expired: prune
-        devicesMap.delete(dev.id);
-        if (this.graceTimers.has(dev.id)) {
-          clearTimeout(this.graceTimers.get(dev.id));
+        // Clear active timer if present
+        const activeTimer = this.graceTimers.get(dev.id);
+        if (activeTimer) {
+          clearTimeout(activeTimer);
           this.graceTimers.delete(dev.id);
         }
+        // Grace period expired: prune
+        this.doc.transact(() => {
+          devicesMap.delete(dev.id);
+        });
       } else if (!this.graceTimers.has(dev.id)) {
         // Schedule remaining grace window timeout
         const remaining = 120000 - elapsed;
         const timer = setTimeout(() => {
+          this.graceTimers.delete(dev.id);
           this.doc.transact(() => {
             devicesMap.delete(dev.id);
           });
-          this.graceTimers.delete(dev.id);
         }, remaining);
         this.graceTimers.set(dev.id, timer);
       }
-    });
+    }
   }
 
   private broadcastDocChannel(payload: Uint8Array) {
     this.peerConnections.forEach((peer) => {
-      if (peer.docChannel.readyState === 'open') {
+      if (peer.docChannel && peer.docChannel.readyState === 'open') {
         peer.docChannel.send(payload as any);
       }
     });
@@ -710,14 +987,31 @@ export class OmniRTCManager {
 
   private broadcastAwarenessChannel(payload: Uint8Array) {
     this.peerConnections.forEach((peer) => {
-      if (peer.awarenessChannel.readyState === 'open') {
+      if (peer.awarenessChannel && peer.awarenessChannel.readyState === 'open') {
         peer.awarenessChannel.send(payload as any);
       }
     });
   }
 
+  /**
+   * Destroys all active peer connections, data channels, heartbeat timers, and WebSocket handles.
+   */
   public destroy() {
     this.isDestroyed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.docUpdateListener) {
+      this.doc.off('update', this.docUpdateListener);
+    }
+    if (this.awarenessUpdateListener) {
+      this.awareness.off('update', this.awarenessUpdateListener);
+    }
+    if (this.graceCheckInterval) {
+      clearInterval(this.graceCheckInterval);
+      this.graceCheckInterval = null;
+    }
     if (this.handshakeTimer) clearTimeout(this.handshakeTimer);
     this.graceTimers.forEach((timer) => clearTimeout(timer));
     this.graceTimers.clear();
@@ -729,14 +1023,20 @@ export class OmniRTCManager {
     this.ws?.close();
   }
 
+  /**
+   * Dispatches receiver-side adaptive bitrate and framerate feedback to the capturing peer.
+   *
+   * @param peerId - The target peer identifier streaming the video.
+   * @param feedback - Target window ID and bounded bitrate/framerate recommendations.
+   */
   public sendQualityFeedback(
     peerId: string,
     feedback: { windowId: string; maxBitrate?: number; maxFramerate?: number }
   ) {
     const peer = this.peerConnections.get(peerId);
-    if (peer && peer.docChannel.readyState === 'open') {
+    if (peer && peer.docChannel && peer.docChannel.readyState === 'open') {
       const text = JSON.stringify(feedback);
-      const packet = new TextEncoder().encode(text);
+      const packet = textEncoder.encode(text);
       const payload = new Uint8Array(packet.length + 1);
       payload[0] = MSG_QUALITY_FEEDBACK;
       payload.set(packet, 1);
@@ -744,6 +1044,11 @@ export class OmniRTCManager {
     }
   }
 
+  /**
+   * Retrieves the raw RTCPeerConnection instance for an active peer, if established.
+   *
+   * @param peerId - The remote peer ID.
+   */
   public getPeerConnection(peerId: string): RTCPeerConnection | undefined {
     return this.peerConnections.get(peerId)?.pc;
   }
@@ -753,13 +1058,13 @@ function prioritizeHardwareCodecs(desc: RTCSessionDescriptionInit): RTCSessionDe
   if (!desc.sdp) return desc;
 
   const lines = desc.sdp.split('\r\n');
-  let videoLineIdx = -1;
+  const videoLineIndices: number[] = [];
   const hardwarePayloads: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.startsWith('m=video ')) {
-      videoLineIdx = i;
+      videoLineIndices.push(i);
     }
     if (line.startsWith('a=rtpmap:')) {
       const match = line.match(/^a=rtpmap:(\d+)\s+(H264|H265|AV1)\//i);
@@ -769,16 +1074,18 @@ function prioritizeHardwareCodecs(desc: RTCSessionDescriptionInit): RTCSessionDe
     }
   }
 
-  if (videoLineIdx !== -1 && hardwarePayloads.length > 0) {
-    const parts = lines[videoLineIdx].split(' ');
-    const header = parts.slice(0, 3);
-    const payloads = parts.slice(3);
+  if (videoLineIndices.length > 0 && hardwarePayloads.length > 0) {
+    for (const idx of videoLineIndices) {
+      const parts = lines[idx].split(' ');
+      const header = parts.slice(0, 3);
+      const payloads = parts.slice(3);
 
-    const prioritized = payloads.filter(p => hardwarePayloads.includes(p));
-    const remaining = payloads.filter(p => !hardwarePayloads.includes(p));
-    const newPayloads = [...prioritized, ...remaining];
+      const prioritized = payloads.filter((p) => hardwarePayloads.includes(p));
+      const remaining = payloads.filter((p) => !hardwarePayloads.includes(p));
+      const newPayloads = [...prioritized, ...remaining];
 
-    lines[videoLineIdx] = [...header, ...newPayloads].join(' ');
+      lines[idx] = [...header, ...newPayloads].join(' ');
+    }
   }
 
   return {

@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import jsQR from 'jsqr';
 import { Camera, ShieldAlert, Send } from 'lucide-react';
 
 interface PairingScreenProps {
@@ -17,15 +16,23 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
   const [scanning, setScanning] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
+  const scanningRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const jsQrModuleRef = useRef<any>(null);
 
   const startScanner = async () => {
     setCameraError(null);
+    scanningRef.current = true;
     setScanning(true);
     try {
+      if (!jsQrModuleRef.current) {
+        const mod = await import('jsqr');
+        jsQrModuleRef.current = (mod as any).default || mod;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' },
       });
@@ -33,17 +40,18 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.setAttribute('playsinline', 'true'); // Required for iOS
-        videoRef.current.play();
+        videoRef.current.play().catch(() => {});
         animationFrameRef.current = requestAnimationFrame(scanFrame);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Camera access error:', err);
       setCameraError('Could not access back camera. Enter PIN manually.');
-      setScanning(false);
+      stopScanner();
     }
   };
 
   const stopScanner = () => {
+    scanningRef.current = false;
     setScanning(false);
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -56,19 +64,24 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
   };
 
   const scanFrame = () => {
-    if (!scanning || !videoRef.current || !canvasRef.current) return;
+    if (!scanningRef.current || !videoRef.current || !canvasRef.current || !jsQrModuleRef.current) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
-    if (video.readyState === video.HAVE_ENOUGH_DATA && ctx) {
+    if (
+      video.readyState === video.HAVE_ENOUGH_DATA &&
+      video.videoWidth > 0 &&
+      video.videoHeight > 0 &&
+      ctx
+    ) {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const jsQRFunc = (jsQR as any).default || jsQR;
+      const jsQRFunc = jsQrModuleRef.current;
       const code = jsQRFunc(imageData.data, imageData.width, imageData.height, {
         inversionAttempts: 'dontInvert',
       });
@@ -91,7 +104,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
       }
     }
 
-    if (scanning) {
+    if (scanningRef.current) {
       animationFrameRef.current = requestAnimationFrame(scanFrame);
     }
   };
@@ -159,11 +172,12 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({
           /* Manual PIN Entry Form */
           <form onSubmit={handleManualPair} className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
-              <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+              <label htmlFor="pin-input" className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
                 Enter Room PIN
               </label>
               <div className="flex gap-2">
                 <input
+                  id="pin-input"
                   type="text"
                   value={pin}
                   onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
 import { focusWindow, blurWindow, getFocusedWindowId, clearFocusIfMatches } from '../src/focusManager.js';
+import { handleWindowDrag, reassignDisconnectedDeviceWindows } from '../src/handoffEngine.js';
+import { Device, WindowInstance } from '../src/types.js';
 
 describe('Yjs Focus Manager', () => {
   it('correctly sets, gets, and blurs window focus in Yjs shared state', () => {
@@ -80,24 +82,22 @@ describe('Yjs Focus Manager', () => {
 
     // 2. Perform border crossing handoff
     // Drag window cursor across seam (x = 1050)
-    import('../src/handoffEngine.js').then(({ handleWindowDrag, reassignDisconnectedDeviceWindows }) => {
-      handleWindowDrag('win-1', 1050, 300, 'peer-A', [peerA, peerB], windowsMap);
-      
-      // Ownership is now peer-B, and focus must be cleared (null)
-      expect(windowsMap.get('win-1')?.owningDeviceId).toBe('peer-B');
-      expect(getFocusedWindowId(doc)).toBeNull();
+    handleWindowDrag('win-1', 1050, 300, 'peer-A', [peerA, peerB], windowsMap);
+    
+    // Ownership is now peer-B, and focus must be cleared (null)
+    expect(windowsMap.get('win-1')?.owningDeviceId).toBe('peer-B');
+    expect(getFocusedWindowId(doc)).toBeNull();
 
-      // Refocus window
-      focusWindow(doc, 'win-1');
-      expect(getFocusedWindowId(doc)).toBe('win-1');
+    // Refocus window
+    focusWindow(doc, 'win-1');
+    expect(getFocusedWindowId(doc)).toBe('win-1');
 
-      // 3. Perform coordinator reassignment on disconnect
-      devicesMap.set('peer-B', { ...peerB, status: 'disconnected' });
-      reassignDisconnectedDeviceWindows('peer-B', devicesMap, windowsMap);
+    // 3. Perform coordinator reassignment on disconnect
+    devicesMap.set('peer-B', { ...peerB, status: 'disconnected' });
+    reassignDisconnectedDeviceWindows('peer-B', devicesMap, windowsMap);
 
-      // Ownership should shift back to A (since B disconnected), and focus cleared again
-      expect(windowsMap.get('win-1')?.owningDeviceId).toBe('peer-A');
-      expect(getFocusedWindowId(doc)).toBeNull();
-    });
+    // Ownership should shift back to A (since B disconnected), and focus cleared again
+    expect(windowsMap.get('win-1')?.owningDeviceId).toBe('peer-A');
+    expect(getFocusedWindowId(doc)).toBeNull();
   });
 });

@@ -1,21 +1,23 @@
 [package]
-name = "app"
+name = "omni-space"
 version = "1.0.0"
 description = "Omni-Space Tauri Native Client Stub"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "1.5.0", features = [ "api-all" ] }
+tauri = { version = "1.8", features = [ "clipboard-all", "window-all" ] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-windows-sys = { version = "0.52.0", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_UI_Accessibility", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Com", "Win32_Media_Audio", "Win32_Graphics_Gdi"] }
 lazy_static = "1.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52.0", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_UI_Accessibility", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Com", "Win32_Media_Audio", "Win32_Graphics_Gdi", "Win32_Security_Cryptography"] }
 
 [features]
 default = [ "custom-protocol" ]
 custom-protocol = [ "tauri/custom-protocol" ]
 
 [build-dependencies]
-tauri-build = { version = "1.5.0", features = [] }
+tauri-build = { version = "1.8", features = [] }
 
 

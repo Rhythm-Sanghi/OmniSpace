@@ -28,6 +28,6 @@ export default ts.config(
     },
   },
   {
-    ignores: ['dist', 'node_modules', '.tauri', 'src-tauri']
+    ignores: ['**/dist/**', '**/node_modules/**', '**/.tauri/**', '**/src-tauri/**', '**/target/**', '**/public/**']
   }
 );

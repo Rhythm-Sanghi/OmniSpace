@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { useTouchInputCapture } from '../hooks/useTouchInputCapture.js';
 import { RemoteWindowRenderer } from 'ui';
 import { WindowInstance, Device, OmniRTCManager } from 'core';
@@ -18,31 +18,26 @@ interface MobileWindowRendererProps {
   onFocusClick: (windowId: string) => void;
 }
 
-export const MobileWindowRenderer: React.FC<MobileWindowRendererProps> = (props) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  
+export const MobileWindowRenderer: React.FC<MobileWindowRendererProps> = React.memo((props) => {
   const touchCaptureListeners = useTouchInputCapture(
     props.localDeviceId,
     props.rtcManager,
     props.windowState,
-    props.devicesMap,
-    containerRef as any
+    props.devicesMap
   );
 
   return (
-    <div ref={containerRef} style={{ display: 'contents' }}>
-      <RemoteWindowRenderer
-        localDeviceId={props.localDeviceId}
-        localDevice={props.localDevice}
-        windowState={props.windowState}
-        stream={props.stream}
-        focusedWindowId={props.focusedWindowId}
-        onDragStart={props.onDragStart}
-        onDrag={props.onDrag}
-        onDragEnd={props.onDragEnd}
-        inputCaptureListeners={touchCaptureListeners}
-        onFocusClick={props.onFocusClick}
-      />
-    </div>
+    <RemoteWindowRenderer
+      localDeviceId={props.localDeviceId}
+      localDevice={props.localDevice}
+      windowState={props.windowState}
+      stream={props.stream}
+      focusedWindowId={props.focusedWindowId}
+      onDragStart={props.onDragStart}
+      onDrag={props.onDrag}
+      onDragEnd={props.onDragEnd}
+      inputCaptureListeners={touchCaptureListeners}
+      onFocusClick={props.onFocusClick}
+    />
   );
-};
+});

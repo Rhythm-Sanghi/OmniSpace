@@ -1,12 +1,15 @@
 import { useEffect } from 'react';
 import * as Y from 'yjs';
-import { OmniClipboardSync } from 'core';
+import { OmniClipboardSync, ClipboardHistoryItem } from 'core';
 
 export function useClipboardWatcher(
   localDeviceId: string,
-  doc: Y.Doc | null,
-  connected: boolean
+  docInput: Y.Doc | null | React.RefObject<Y.Doc | null>,
+  connected: boolean,
+  onHistoryChanged?: (history: ClipboardHistoryItem[]) => void
 ) {
+  const doc = docInput && 'current' in docInput ? docInput.current : docInput;
+
   useEffect(() => {
     const isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI_METADATA__;
     if (!doc || !connected || !isTauri) return;
@@ -27,10 +30,13 @@ export function useClipboardWatcher(
       readLocalClipboard,
       writeLocalClipboard
     );
+    if (onHistoryChanged) {
+      sync.onHistoryChanged = onHistoryChanged;
+    }
     sync.initialize();
 
     return () => {
       sync.destroy();
     };
-  }, [localDeviceId, doc, connected]);
+  }, [localDeviceId, doc, connected, onHistoryChanged]);
 }

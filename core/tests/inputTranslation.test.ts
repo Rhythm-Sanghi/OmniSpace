@@ -78,3 +78,58 @@ describe('translateToRealCoordinates', () => {
     expect(clickInActive?.y).toBe(300);
   });
 });
+
+import { isValidInputEventEnvelope, isValidQualityFeedback } from '../src/inputProtocol.js';
+
+describe('isValidInputEventEnvelope & isValidQualityFeedback', () => {
+  it('validates mousemove envelope correctly', () => {
+    const valid = {
+      targetWindowId: 'win-1',
+      timestamp: Date.now(),
+      event: {
+        type: 'mousemove',
+        data: { x: 100, y: 200 },
+      },
+    };
+    expect(isValidInputEventEnvelope(valid)).toBe(true);
+
+    const invalid = {
+      targetWindowId: '',
+      timestamp: Date.now(),
+      event: {
+        type: 'mousemove',
+        data: { x: 'bad', y: 200 },
+      },
+    };
+    expect(isValidInputEventEnvelope(invalid)).toBe(false);
+  });
+
+  it('validates keyboard keyup/keydown envelopes correctly', () => {
+    const valid = {
+      targetWindowId: 'win-1',
+      timestamp: Date.now(),
+      event: {
+        type: 'keydown',
+        data: { code: 'KeyA', key: 'a' },
+      },
+    };
+    expect(isValidInputEventEnvelope(valid)).toBe(true);
+
+    const invalid = {
+      targetWindowId: 'win-1',
+      timestamp: Date.now(),
+      event: {
+        type: 'keydown',
+        data: { code: 123 },
+      },
+    };
+    expect(isValidInputEventEnvelope(invalid)).toBe(false);
+  });
+
+  it('validates quality feedback shapes correctly', () => {
+    expect(isValidQualityFeedback({ windowId: 'win-1', maxBitrate: 1000000 })).toBe(true);
+    expect(isValidQualityFeedback({ windowId: '', maxBitrate: 1000000 })).toBe(false);
+    expect(isValidQualityFeedback({ windowId: 'win-1', maxBitrate: -50 })).toBe(false);
+    expect(isValidQualityFeedback(null)).toBe(false);
+  });
+});

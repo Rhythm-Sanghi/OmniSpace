@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as Y from 'yjs';
-import { OmniRTCManager, OmniQualityController } from '../src/index.js';
+import { OmniQualityController } from '../src/index.js';
 
 describe('OmniQualityController', () => {
   let mockRtcManager: any;
@@ -121,7 +120,7 @@ describe('OmniQualityController', () => {
   });
 
   it('applies received quality feedback parameters on the sender side', () => {
-    const _controller = new OmniQualityController(mockRtcManager, getSenderSpy);
+    const controller = new OmniQualityController(mockRtcManager, getSenderSpy);
 
     // Simulate receiving feedback packet on sender side
     mockRtcManager.onQualityFeedbackReceived('device-B', {
@@ -135,5 +134,7 @@ describe('OmniQualityController', () => {
     const appliedParams = mockSender.setParameters.mock.calls[0][0];
     expect(appliedParams.encodings[0].maxBitrate).toBe(300000);
     expect(appliedParams.encodings[0].maxFramerate).toBe(10);
+
+    controller.destroy();
   });
 });

@@ -1,6 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Settings, AlertCircle, X } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/tauri';
+
+const isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI_METADATA__;
+
+async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
+  if (!isTauri) return null;
+  try {
+    const { invoke } = await import('@tauri-apps/api/tauri');
+    return await invoke<T>(cmd, args);
+  } catch (err) {
+    console.warn(`[Tauri] Invoke '${cmd}' failed:`, err);
+    return null;
+  }
+}
 
 interface PermissionOnboardingProps {
   scope: 'accessibility' | 'screen_recording';
@@ -31,9 +43,9 @@ export const PermissionOnboarding: React.FC<PermissionOnboardingProps> = ({
   const handleOpenSettings = async () => {
     try {
       if (scope === 'screen_recording') {
-        await invoke('request_screen_recording_permission');
+        await safeInvoke('request_screen_recording_permission');
       } else {
-        await invoke('request_accessibility_permission');
+        await safeInvoke('request_accessibility_permission');
       }
     } catch (err: any) {
       console.error(err);
@@ -48,7 +60,7 @@ export const PermissionOnboarding: React.FC<PermissionOnboardingProps> = ({
         ? 'check_screen_recording_permission'
         : 'check_accessibility_permission';
       
-      const hasPermission = await invoke<boolean>(command);
+      const hasPermission = await safeInvoke<boolean>(command);
       if (hasPermission) {
         onPermissionGranted();
       } else {

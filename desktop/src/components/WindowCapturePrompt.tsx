@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Monitor, ScreenShare, X, ChevronRight, RefreshCw } from 'lucide-react';
 import { NativeWindowInfo } from 'core';
 
@@ -11,13 +11,18 @@ export function WindowCapturePrompt({ onCaptureSelected, onClose }: WindowCaptur
   const [windows, setWindows] = useState<NativeWindowInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [isTauri, setIsTauri] = useState(false);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
     const tauriCheck = typeof window !== 'undefined' && !!(window as any).__TAURI_METADATA__;
     setIsTauri(tauriCheck);
     if (tauriCheck) {
       fetchWindows();
     }
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   const fetchWindows = async () => {
@@ -25,10 +30,11 @@ export function WindowCapturePrompt({ onCaptureSelected, onClose }: WindowCaptur
     try {
       const { invoke } = await import('@tauri-apps/api/tauri');
       const list = await invoke<any[]>('enumerate_windows');
+      if (!isMountedRef.current) return;
       setWindows(
-        list.map((w: any) => ({
-          handle: w.handle,
-          title: w.title,
+        (list || []).map((w: any) => ({
+          handle: w?.handle ?? 0,
+          title: w?.title || 'Untitled Window',
           x: 0,
           y: 0,
           width: 0,
@@ -38,7 +44,9 @@ export function WindowCapturePrompt({ onCaptureSelected, onClose }: WindowCaptur
     } catch (err) {
       console.error('Failed to enumerate native windows:', err);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 

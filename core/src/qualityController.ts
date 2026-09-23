@@ -1,15 +1,13 @@
 import { OmniRTCManager } from './rtc.js';
-
-export interface QualityFeedback {
-  windowId: string;
-  maxBitrate?: number; // in bps
-  maxFramerate?: number; // in fps
-}
+import { QualityFeedback } from './inputProtocol.js';
+export type { QualityFeedback };
 
 export class OmniQualityController {
-  private pollIntervals: Map<string, any> = new Map(); // windowId -> setInterval ID
+  private trackedWindows: Map<string, { peerId: string; pc: RTCPeerConnection }> = new Map();
+  private masterInterval: ReturnType<typeof setInterval> | null = null;
   private prevStats: Map<string, { packetsLost: number; packetsReceived: number }> = new Map(); // windowId -> stats
   private consecutiveCleanIntervals: Map<string, number> = new Map(); // windowId -> count
+  private consecutiveErrors: Map<string, number> = new Map(); // windowId -> consecutive error count
 
   // Active targets
   private currentBitrate: Map<string, number> = new Map(); // windowId -> bps
@@ -43,23 +41,33 @@ export class OmniQualityController {
     this.currentBitrate.set(windowId, this.DEFAULT_BITRATE);
     this.currentFramerate.set(windowId, this.DEFAULT_FRAMERATE);
     this.consecutiveCleanIntervals.set(windowId, 0);
+    this.consecutiveErrors.set(windowId, 0);
+    this.trackedWindows.set(windowId, { peerId, pc });
 
-    const interval = setInterval(async () => {
+    if (!this.masterInterval) {
+      this.masterInterval = setInterval(() => this.pollAllStats(), 2000);
+    }
+  }
+
+  private async pollAllStats() {
+    const entries = Array.from(this.trackedWindows.entries());
+    for (const [windowId, { peerId, pc }] of entries) {
       try {
         const stats = await pc.getStats();
-        let inboundVideoStats: any = null;
+        this.consecutiveErrors.set(windowId, 0);
+        let inboundVideoStats: RTCInboundRtpStreamStats | null = null;
 
         stats.forEach((report) => {
-          if (report.type === 'inbound-rtp' && report.kind === 'video') {
-            inboundVideoStats = report;
+          if (report.type === 'inbound-rtp' && (report as any).kind === 'video') {
+            inboundVideoStats = report as RTCInboundRtpStreamStats;
           }
         });
 
-        if (!inboundVideoStats) return;
+        if (!inboundVideoStats) continue;
 
-        const packetsLost = inboundVideoStats.packetsLost || 0;
-        const packetsReceived = inboundVideoStats.packetsReceived || 0;
-        const jitter = inboundVideoStats.jitter || 0;
+        const packetsLost = (inboundVideoStats as any).packetsLost || 0;
+        const packetsReceived = (inboundVideoStats as any).packetsReceived || 0;
+        const jitter = (inboundVideoStats as any).jitter || 0;
 
         const prev = this.prevStats.get(windowId) || { packetsLost: 0, packetsReceived: 0 };
         this.prevStats.set(windowId, { packetsLost, packetsReceived });
@@ -116,22 +124,28 @@ export class OmniQualityController {
         }
       } catch (err) {
         console.error(`Error polling stats for window ${windowId}:`, err);
+        const errCount = (this.consecutiveErrors.get(windowId) || 0) + 1;
+        this.consecutiveErrors.set(windowId, errCount);
+        if (errCount >= 5) {
+          console.warn(`[QualityController] Circuit breaker tripped for window ${windowId} after 5 consecutive errors. Stopping polling.`);
+          this.stopStatsPolling(windowId);
+        }
       }
-    }, 2000);
-
-    this.pollIntervals.set(windowId, interval);
+    }
   }
 
   /**
    * Stops polling receiver stats for a track.
    */
   public stopStatsPolling(windowId: string) {
-    if (this.pollIntervals.has(windowId)) {
-      clearInterval(this.pollIntervals.get(windowId));
-      this.pollIntervals.delete(windowId);
+    this.trackedWindows.delete(windowId);
+    if (this.trackedWindows.size === 0 && this.masterInterval) {
+      clearInterval(this.masterInterval);
+      this.masterInterval = null;
     }
     this.prevStats.delete(windowId);
     this.consecutiveCleanIntervals.delete(windowId);
+    this.consecutiveErrors.delete(windowId);
     this.currentBitrate.delete(windowId);
     this.currentFramerate.delete(windowId);
   }
@@ -145,7 +159,7 @@ export class OmniQualityController {
 
     try {
       const params = sender.getParameters();
-      if (!params.encodings) {
+      if (!params.encodings || params.encodings.length === 0) {
         params.encodings = [{}];
       }
 
@@ -163,11 +177,17 @@ export class OmniQualityController {
   }
 
   public destroy() {
-    this.pollIntervals.forEach((interval) => clearInterval(interval));
-    this.pollIntervals.clear();
+    this.rtcManager.onQualityFeedbackReceived = undefined;
+    if (this.masterInterval) {
+      clearInterval(this.masterInterval);
+      this.masterInterval = null;
+    }
+    this.trackedWindows.clear();
     this.prevStats.clear();
     this.consecutiveCleanIntervals.clear();
+    this.consecutiveErrors.clear();
     this.currentBitrate.clear();
     this.currentFramerate.clear();
   }
 }
+

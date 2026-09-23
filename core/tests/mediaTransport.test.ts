@@ -222,4 +222,42 @@ describe('OmniMediaTransportManager', () => {
 
     transport.destroy();
   });
+
+  it('multiplexes audio tracks alongside video tracks when present in capture stream', () => {
+    const audioTrack = { id: 'audio-track-1', stop: vi.fn() };
+    const streamWithAudio = {
+      id: 'stream-audio-1',
+      getVideoTracks: () => [mockTrack],
+      getAudioTracks: () => [audioTrack],
+    };
+
+    mockCaptureManager.getLocalStream = vi.fn().mockReturnValue(streamWithAudio);
+
+    const transport = new OmniMediaTransportManager(
+      mockRtcManager,
+      mockCaptureManager,
+      windowsMap
+    );
+
+    const win: WindowInstance = {
+      id: 'win-audio',
+      title: 'Media Player',
+      width: 800,
+      height: 600,
+      x: 0,
+      y: 0,
+      owningDeviceId: 'device-B',
+      capturingDeviceId: 'device-A',
+      hasActiveCapture: true,
+      streamId: 'stream-audio-1',
+    };
+
+    windowsMap.set(win.id, win);
+
+    // Verify both video and audio tracks were attached
+    expect(mockPc.addTrack).toHaveBeenCalledWith(mockTrack, streamWithAudio);
+    expect(mockPc.addTrack).toHaveBeenCalledWith(audioTrack, streamWithAudio);
+
+    transport.destroy();
+  });
 });

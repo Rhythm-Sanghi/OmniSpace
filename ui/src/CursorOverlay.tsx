@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import * as awarenessProtocol from 'y-protocols/awareness';
 import { Device } from 'core';
 
 interface CursorInfo {
@@ -11,10 +12,21 @@ interface CursorInfo {
   active: boolean;
 }
 
+interface AwarenessState {
+  deviceId?: string;
+  name?: string;
+  color?: string;
+  cursor?: {
+    active: boolean;
+    x: number;
+    y: number;
+  };
+}
+
 interface CursorOverlayProps {
   localDeviceId: string;
   localDevice: Device | null;
-  awareness: any;
+  awareness: awarenessProtocol.Awareness | null;
 }
 
 export const CursorOverlay: React.FC<CursorOverlayProps> = ({
@@ -25,13 +37,19 @@ export const CursorOverlay: React.FC<CursorOverlayProps> = ({
   const [remoteCursors, setRemoteCursors] = useState<CursorInfo[]>([]);
 
   useEffect(() => {
-    if (!localDevice) return;
+    if (!localDevice || !awareness) {
+      setRemoteCursors([]);
+      return;
+    }
 
     const updateCursors = () => {
       const states = awareness.getStates();
       const cursors: CursorInfo[] = [];
 
-      states.forEach((state: any, clientID: number) => {
+      states.forEach((rawState: unknown, clientID: number) => {
+        const state = rawState as AwarenessState | undefined;
+        if (!state) return;
+
         // Skip ourselves
         if (state.deviceId === localDeviceId) return;
 
@@ -93,6 +111,8 @@ export const CursorOverlay: React.FC<CursorOverlayProps> = ({
         {remoteCursors.map((cursor) => (
           <motion.div
             key={cursor.id}
+            role="img"
+            aria-label={`${cursor.name}'s cursor`}
             style={{
               position: 'absolute',
               x: cursor.lx,
@@ -111,6 +131,7 @@ export const CursorOverlay: React.FC<CursorOverlayProps> = ({
             <div style={{ position: 'relative' }}>
               {/* Soft radial glow */}
               <div
+                aria-hidden="true"
                 style={{
                   position: 'absolute',
                   top: -12,
@@ -126,6 +147,7 @@ export const CursorOverlay: React.FC<CursorOverlayProps> = ({
 
               {/* Cursor shape: custom neon ring and pointer */}
               <svg
+                aria-hidden="true"
                 width="18"
                 height="18"
                 viewBox="0 0 18 18"

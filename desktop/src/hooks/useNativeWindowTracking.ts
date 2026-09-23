@@ -4,13 +4,14 @@ import { WindowInstance } from 'core';
 
 export function useNativeWindowTracking(
   localDeviceId: string,
-  windowsMap: Y.Map<WindowInstance>,
+  windowsMap: Y.Map<WindowInstance> | null | undefined,
   localWindowHandles: Map<string, number>
 ) {
   useEffect(() => {
     const isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI_METADATA__;
-    if (!isTauri) return;
+    if (!isTauri || !windowsMap) return;
 
+    let isCancelled = false;
     let unsubscribeBounds: (() => void) | null = null;
     let unsubscribeClosed: (() => void) | null = null;
 
@@ -18,9 +19,10 @@ export function useNativeWindowTracking(
     const initTauriListeners = async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
+        if (isCancelled) return;
 
         // Listen for move/resize bounds updates from Rust poll loop
-        unsubscribeBounds = await listen(
+        const unlistenBounds = await listen(
           'native-window-bounds',
           (event: any) => {
             const { handle, x, y, width, height } = event.payload;
@@ -51,8 +53,15 @@ export function useNativeWindowTracking(
           }
         );
 
+        if (isCancelled) {
+          unlistenBounds();
+          return;
+        } else {
+          unsubscribeBounds = unlistenBounds;
+        }
+
         // Listen for window closures
-        unsubscribeClosed = await listen('native-window-closed', (event: any) => {
+        const unlistenClosed = await listen('native-window-closed', (event: any) => {
           const handle = event.payload;
 
           let matchedWindowId: string | null = null;
@@ -73,6 +82,13 @@ export function useNativeWindowTracking(
             }
           }
         });
+
+        if (isCancelled) {
+          unlistenClosed();
+          return;
+        } else {
+          unsubscribeClosed = unlistenClosed;
+        }
       } catch (err) {
         console.error('Failed to initialize Tauri native window tracking listeners:', err);
       }
@@ -81,6 +97,7 @@ export function useNativeWindowTracking(
     initTauriListeners();
 
     return () => {
+      isCancelled = true;
       if (unsubscribeBounds) unsubscribeBounds();
       if (unsubscribeClosed) unsubscribeClosed();
     };

@@ -1,0 +1,33 @@
+{
+  "name": "Omni-Space Companion",
+  "short_name": "OmniSpace",
+  "description": "Unified, P2P, Cross-Device Window Manager Companion Viewport",
+  "start_url": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "categories": ["utilities", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Pair Device",
+      "url": "/",
+      "description": "Pair this viewport with an Omni-Space desktop host"
+    }
+  ],
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

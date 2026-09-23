@@ -1,5 +1,5 @@
-import React from 'react';
-import { motion } from 'framer-motion';
+import React, { useState } from 'react';
+import { motion, type PanInfo } from 'framer-motion';
 import * as Y from 'yjs';
 import { Monitor, Laptop, Tablet, Smartphone } from 'lucide-react';
 import { Device } from 'core';
@@ -15,6 +15,9 @@ export const CalibrationScreen: React.FC<CalibrationScreenProps> = ({
   devices,
   devicesMap,
 }) => {
+  const [announcement, setAnnouncement] = useState('');
+  const [pingedDeviceId, setPingedDeviceId] = useState<string | null>(null);
+
   // Scale factor to map screen pixels to calibration canvas pixels (e.g. 1px on canvas = 10px on screen)
   const SCALE = 0.08;
 
@@ -22,23 +25,139 @@ export const CalibrationScreen: React.FC<CalibrationScreenProps> = ({
   const OFFSET_X = 250;
   const OFFSET_Y = 150;
 
-  const handleDeviceDragEnd = (device: Device, info: any) => {
+  const handleDeviceDragEnd = (device: Device, info: PanInfo) => {
     // Calculate new global position based on drag offset delta
     const deltaX = Math.round(info.offset.x / SCALE);
     const deltaY = Math.round(info.offset.y / SCALE);
 
-    const newX = device.x + deltaX;
-    const newY = device.y + deltaY;
+    let newX = device.x + deltaX;
+    let newY = device.y + deltaY;
+
+    // 2D Magnetic Screen-to-Screen Edge Snapping (threshold = 50px global)
+    const SNAP_THRESHOLD = 60;
+    const otherDevices = devices.filter((d) => d.id !== device.id && d.status !== 'disconnected');
+
+    for (const other of otherDevices) {
+      // Snap to other's right edge
+      if (Math.abs(newX - (other.x + other.width)) <= SNAP_THRESHOLD) {
+        newX = other.x + other.width;
+      }
+      // Snap to other's left edge
+      else if (Math.abs(newX + device.width - other.x) <= SNAP_THRESHOLD) {
+        newX = other.x - device.width;
+      }
+
+      // Snap to other's bottom edge
+      if (Math.abs(newY - (other.y + other.height)) <= SNAP_THRESHOLD) {
+        newY = other.y + other.height;
+      }
+      // Snap to other's top edge
+      else if (Math.abs(newY + device.height - other.y) <= SNAP_THRESHOLD) {
+        newY = other.y - device.height;
+      }
+
+      // Align tops if horizontally adjacent
+      if (Math.abs(newY - other.y) <= SNAP_THRESHOLD) {
+        newY = other.y;
+      }
+      // Align lefts if vertically stacked
+      if (Math.abs(newX - other.x) <= SNAP_THRESHOLD) {
+        newX = other.x;
+      }
+    }
 
     // Update in Yjs map
     const existing = devicesMap.get(device.id);
     if (existing) {
+      const applyUpdate = () => {
+        devicesMap.set(device.id, {
+          ...existing,
+          x: newX,
+          y: newY,
+        });
+      };
+      if (devicesMap.doc) {
+        devicesMap.doc.transact(applyUpdate);
+      } else {
+        applyUpdate();
+      }
+      setAnnouncement(`${device.name} moved to X ${newX}, Y ${newY}`);
+    }
+  };
+
+  const applyPreset = (preset: 'side-by-side' | 'stacked-above' | 'reset-origin') => {
+    const local = devices.find((d) => d.id === localDeviceId);
+    if (!local) return;
+
+    const apply = () => {
+      if (preset === 'reset-origin') {
+        devicesMap.set(local.id, { ...local, x: 0, y: 0 });
+        setAnnouncement('Reset local device to origin');
+        return;
+      }
+
+      const others = devices.filter((d) => d.id !== localDeviceId);
+      let currentX = local.x + local.width;
+      let currentY = local.y - (others[0]?.height || 800);
+
+      others.forEach((dev) => {
+        if (preset === 'side-by-side') {
+          devicesMap.set(dev.id, { ...dev, x: currentX, y: local.y });
+          currentX += dev.width;
+        } else if (preset === 'stacked-above') {
+          devicesMap.set(dev.id, { ...dev, x: local.x, y: currentY });
+          currentY -= dev.height;
+        }
+      });
+      setAnnouncement(`Applied ${preset} display arrangement`);
+    };
+
+    if (devicesMap.doc) {
+      devicesMap.doc.transact(apply);
+    } else {
+      apply();
+    }
+  };
+
+  const pingDevice = (deviceId: string) => {
+    setPingedDeviceId(deviceId);
+    setTimeout(() => setPingedDeviceId(null), 1200);
+  };
+
+  const handleKeyDown = (device: Device, e: React.KeyboardEvent) => {
+    const existing = devicesMap.get(device.id);
+    if (!existing) return;
+
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      setAnnouncement(`${device.name} selected at X ${existing.x}, Y ${existing.y}. Use arrow keys to reposition.`);
+      return;
+    }
+
+    let deltaX = 0;
+    let deltaY = 0;
+    const STEP = 50; // 50px global plane nudge per arrow press
+
+    if (e.key === 'ArrowLeft') deltaX = -STEP;
+    else if (e.key === 'ArrowRight') deltaX = STEP;
+    else if (e.key === 'ArrowUp') deltaY = -STEP;
+    else if (e.key === 'ArrowDown') deltaY = STEP;
+    else return;
+
+    e.preventDefault();
+    const applyUpdate = () => {
       devicesMap.set(device.id, {
         ...existing,
-        x: newX,
-        y: newY,
+        x: existing.x + deltaX,
+        y: existing.y + deltaY,
       });
+    };
+    if (devicesMap.doc) {
+      devicesMap.doc.transact(applyUpdate);
+    } else {
+      applyUpdate();
     }
+    setAnnouncement(`${device.name} repositioned to X ${existing.x + deltaX}, Y ${existing.y + deltaY}`);
   };
 
   const getDeviceIcon = (type: 'desktop' | 'mobile', name: string) => {
@@ -56,11 +175,38 @@ export const CalibrationScreen: React.FC<CalibrationScreenProps> = ({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-4 border-b border-slate-800 bg-slate-900/40">
-        <h2 className="text-lg font-semibold text-slate-200">Arrange Displays</h2>
-        <p className="text-xs text-slate-400 mt-1">
-          Drag and arrange screens to match the physical layout of your desk. Windows and cursors will transition across adjacent borders.
-        </p>
+      <div className="p-4 border-b border-slate-800 bg-slate-900/40 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-200">Arrange Displays</h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Drag screens to match your desk. Screens automatically magnetically snap along edges.
+          </p>
+        </div>
+
+        {/* Layout Preset Buttons */}
+        <div className="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs">
+          <button
+            type="button"
+            onClick={() => applyPreset('side-by-side')}
+            className="px-2.5 py-1 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700/60 transition font-medium"
+          >
+            Side-by-Side
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset('stacked-above')}
+            className="px-2.5 py-1 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700/60 transition font-medium"
+          >
+            Stacked
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset('reset-origin')}
+            className="px-2.5 py-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700/60 transition font-medium"
+          >
+            Reset (0,0)
+          </button>
+        </div>
       </div>
 
       {/* Grid Canvas */}
@@ -82,6 +228,7 @@ export const CalibrationScreen: React.FC<CalibrationScreenProps> = ({
         {devices.map((device) => {
           const isLocal = device.id === localDeviceId;
           const isDisconnected = device.status === 'disconnected';
+          const isPinged = pingedDeviceId === device.id;
 
           // Convert global coordinates to visual canvas coordinates
           const left = device.x * SCALE + OFFSET_X;
@@ -92,9 +239,20 @@ export const CalibrationScreen: React.FC<CalibrationScreenProps> = ({
           return (
             <motion.div
               key={device.id}
+              tabIndex={0}
+              role="button"
+              aria-label={`Display: ${isLocal ? 'This Device' : device.name}. Press arrow keys to reposition display.`}
+              onKeyDown={(e) => handleKeyDown(device, e)}
+              onClick={() => pingDevice(device.id)}
               drag
               dragMomentum={false}
               dragElastic={0}
+              animate={{
+                x: 0,
+                y: 0,
+                scale: isPinged ? [1, 1.08, 1] : 1,
+              }}
+              transition={isPinged ? { repeat: 1, duration: 0.3 } : undefined}
               onDragEnd={(_, info) => handleDeviceDragEnd(device, info)}
               style={{
                 position: 'absolute',
@@ -119,12 +277,16 @@ export const CalibrationScreen: React.FC<CalibrationScreenProps> = ({
                     ? 'rgba(168, 85, 247, 0.15)'
                     : 'rgba(30, 41, 59, 0.45)',
                   backdropFilter: 'blur(10px)',
-                  border: isDisconnected
+                  border: isPinged
+                    ? '2px solid #38bdf8'
+                    : isDisconnected
                     ? '1.5px dashed rgba(255, 255, 255, 0.1)'
                     : isLocal
                     ? '2px solid #a855f7'
                     : '1.5px solid rgba(255, 255, 255, 0.15)',
-                  boxShadow: isDisconnected
+                  boxShadow: isPinged
+                    ? '0 0 20px rgba(56, 189, 248, 0.6)'
+                    : isDisconnected
                     ? 'none'
                     : isLocal
                     ? '0 0 15px rgba(168, 85, 247, 0.2)'
@@ -190,6 +352,10 @@ export const CalibrationScreen: React.FC<CalibrationScreenProps> = ({
           );
         })}
       </div>
+      <div className="sr-only" aria-live="polite">
+        {announcement}
+      </div>
     </div>
   );
 };
+

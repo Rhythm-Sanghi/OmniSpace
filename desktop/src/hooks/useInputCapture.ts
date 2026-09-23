@@ -14,19 +14,23 @@ export function useInputCapture(
   rtcManager: OmniRTCManager | null,
   windowState: WindowInstance,
   devicesMap: Y.Map<Device>,
-  containerRef: React.RefObject<HTMLDivElement | null>
+  containerRef?: React.RefObject<HTMLDivElement | null>
 ) {
   const lastMouseMoveTimeRef = useRef<number>(0);
+  const windowStateRef = useRef<WindowInstance>(windowState);
+  windowStateRef.current = windowState;
 
   // 1. Mouse Event Handlers (attached to <video> container)
   const handleMouseEvent = (
     type: 'mousedown' | 'mousemove' | 'mouseup',
     e: React.MouseEvent<HTMLDivElement>
   ) => {
-    if (!rtcManager || !containerRef.current) return;
-    if (windowState.capturingDeviceId === localDeviceId) return; // Self-captured is handled locally
+    if (!rtcManager) return;
+    const currentWin = windowStateRef.current;
+    if (currentWin.capturingDeviceId === localDeviceId) return; // Self-captured is handled locally
 
-    const container = containerRef.current;
+    const container = containerRef?.current || (e.currentTarget as HTMLDivElement);
+    if (!container) return;
     const rect = container.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -40,69 +44,85 @@ export function useInputCapture(
       lastMouseMoveTimeRef.current = now;
     }
 
-    const capturingDevice = devicesMap.get(windowState.capturingDeviceId);
+    const capturingDevice = devicesMap.get(currentWin.capturingDeviceId);
     if (!capturingDevice) return;
 
-    const translated = translateToRealCoordinates(
+    const realCoords = translateToRealCoordinates(
       { x, y },
       { width: rect.width, height: rect.height },
-      windowState,
+      currentWin,
       capturingDevice
     );
 
-    if (translated) {
-      const envelope: InputEventEnvelope = {
-        targetWindowId: windowState.id,
-        event: {
-          type,
-          data: {
-            x: translated.x,
-            y: translated.y,
-            button: e.button,
-          },
-        } as any,
-        timestamp: Date.now(),
+    if (!realCoords) return;
+
+    let eventPayload: InputEventEnvelope['event'];
+    if (type === 'mousemove') {
+      eventPayload = {
+        type: 'mousemove',
+        data: {
+          x: realCoords.x,
+          y: realCoords.y,
+        },
       };
-      rtcManager.sendMouseInput(windowState.capturingDeviceId, envelope);
+    } else {
+      eventPayload = {
+        type,
+        data: {
+          x: realCoords.x,
+          y: realCoords.y,
+          button: e.button,
+        },
+      };
     }
+
+    const envelope: InputEventEnvelope = {
+      targetWindowId: currentWin.id,
+      event: eventPayload,
+      timestamp: Date.now(),
+    };
+
+    rtcManager.sendMouseInput(currentWin.capturingDeviceId, envelope);
   };
 
-  // Scroll/Wheel Event Handler
   const handleWheelEvent = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (!rtcManager || !containerRef.current) return;
-    if (windowState.capturingDeviceId === localDeviceId) return;
+    if (!rtcManager) return;
+    const currentWin = windowStateRef.current;
+    if (currentWin.capturingDeviceId === localDeviceId) return;
 
-    const container = containerRef.current;
+    const container = containerRef?.current || (e.currentTarget as HTMLDivElement);
+    if (!container) return;
     const rect = container.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    const capturingDevice = devicesMap.get(windowState.capturingDeviceId);
+    const capturingDevice = devicesMap.get(currentWin.capturingDeviceId);
     if (!capturingDevice) return;
 
-    const translated = translateToRealCoordinates(
+    const realCoords = translateToRealCoordinates(
       { x, y },
       { width: rect.width, height: rect.height },
-      windowState,
+      currentWin,
       capturingDevice
     );
 
-    if (translated) {
-      const envelope: InputEventEnvelope = {
-        targetWindowId: windowState.id,
-        event: {
-          type: 'scroll',
-          data: {
-            x: translated.x,
-            y: translated.y,
-            deltaX: e.deltaX,
-            deltaY: e.deltaY,
-          },
+    if (!realCoords) return;
+
+    const envelope: InputEventEnvelope = {
+      targetWindowId: currentWin.id,
+      event: {
+        type: 'scroll',
+        data: {
+          x: realCoords.x,
+          y: realCoords.y,
+          deltaX: e.deltaX,
+          deltaY: e.deltaY,
         },
-        timestamp: Date.now(),
-      };
-      rtcManager.sendMouseInput(windowState.capturingDeviceId, envelope);
-    }
+      },
+      timestamp: Date.now(),
+    };
+
+    rtcManager.sendMouseInput(currentWin.capturingDeviceId, envelope);
   };
 
   // 2. Global Keyboard Event Hook (listens to global window context if focused)
@@ -110,17 +130,24 @@ export function useInputCapture(
     if (!rtcManager) return;
 
     const handleKeyboard = (type: 'keydown' | 'keyup', e: KeyboardEvent) => {
+      const currentWin = windowStateRef.current;
       // Focus gating checks
       const focusedId = getFocusedWindowId(rtcManager.doc);
-      if (focusedId !== windowState.id) return;
-      if (windowState.owningDeviceId !== localDeviceId) return;
-      if (windowState.capturingDeviceId === localDeviceId) return;
+      if (focusedId !== currentWin.id) return;
+      if (currentWin.owningDeviceId !== localDeviceId) return;
+      if (currentWin.capturingDeviceId === localDeviceId) return;
 
-      // Prevent system keys (e.g. Tab, spacebar) from scrolling page
-      e.preventDefault();
+      // Allow developer and browser reload/inspect shortcuts through
+      const isDevShortcut =
+        e.key === 'F12' ||
+        ((e.ctrlKey || e.metaKey) && ['r', 'R', 'i', 'I'].includes(e.key));
+      if (!isDevShortcut) {
+        // Prevent system keys (e.g. Tab, spacebar) from scrolling page
+        e.preventDefault();
+      }
 
       const envelope: InputEventEnvelope = {
-        targetWindowId: windowState.id,
+        targetWindowId: currentWin.id,
         event: {
           type,
           data: {
@@ -131,7 +158,7 @@ export function useInputCapture(
         timestamp: Date.now(),
       };
 
-      rtcManager.sendKeyboardInput(windowState.capturingDeviceId, envelope);
+      rtcManager.sendKeyboardInput(currentWin.capturingDeviceId, envelope);
     };
 
     const onKeyDown = (e: KeyboardEvent) => handleKeyboard('keydown', e);
@@ -144,7 +171,7 @@ export function useInputCapture(
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [rtcManager, windowState, localDeviceId]);
+  }, [rtcManager, windowState.id, localDeviceId]);
 
   return {
     onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => handleMouseEvent('mousedown', e),

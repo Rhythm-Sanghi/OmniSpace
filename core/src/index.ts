@@ -13,3 +13,8 @@ export * from './inputTranslation.js';
 export * from './focusManager.js';
 export * from './clipboardSync.js';
 export * from './inputProtocol.js';
+export * from './equality.js';
+export * from './fileTransfer.js';
+export * from './e2ee.js';
+export * from './localDiscovery.js';
+

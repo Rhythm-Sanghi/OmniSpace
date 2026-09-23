@@ -68,4 +68,52 @@ describe('OmniClipboardSync', () => {
 
     sync.destroy();
   });
+
+  it('manages rich clipboard sync and history with capping and deduplication', async () => {
+    const doc = new Y.Doc();
+    let localClipboard = '';
+
+    const readSpy = vi.fn().mockImplementation(() => Promise.resolve(localClipboard));
+    const writeSpy = vi.fn().mockImplementation((text) => {
+      localClipboard = text;
+      return Promise.resolve();
+    });
+
+    const sync = new OmniClipboardSync('device-A', doc, readSpy, writeSpy);
+    const historyChangedSpy = vi.fn();
+    sync.onHistoryChanged = historyChangedSpy;
+
+    // Push rich image clipboard
+    const sampleBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    await sync.pushRichClipboard('image', sampleBase64, 'image/png');
+
+    const history = sync.getHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0].type).toBe('image');
+    expect(history[0].mimeType).toBe('image/png');
+    expect(history[0].content).toBe(sampleBase64);
+    expect(history[0].sourceDeviceId).toBe('device-A');
+    expect(historyChangedSpy).toHaveBeenCalledTimes(1);
+
+    // Verify Yjs doc map
+    const clipboardMap = doc.getMap<any>('clipboard');
+    const data = clipboardMap.get('data');
+    expect(data.type).toBe('image');
+    expect(data.mimeType).toBe('image/png');
+    expect(data.content).toBe(sampleBase64);
+
+    // Push identical content -> should deduplicate top item
+    await sync.pushRichClipboard('image', sampleBase64, 'image/png');
+    expect(sync.getHistory()).toHaveLength(1);
+
+    // Push 11 distinct items to test capping at 10 items
+    for (let i = 0; i < 11; i++) {
+      await sync.pushRichClipboard('text', `Item ${i}`);
+    }
+    const cappedHistory = sync.getHistory();
+    expect(cappedHistory.length).toBe(10);
+    expect(cappedHistory[0].content).toBe('Item 10');
+
+    sync.destroy();
+  });
 });

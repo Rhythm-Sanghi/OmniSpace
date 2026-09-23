@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { useInputCapture } from '../hooks/useInputCapture.js';
 import { RemoteWindowRenderer } from 'ui';
 import { WindowInstance, Device, OmniRTCManager } from 'core';
@@ -16,33 +16,36 @@ interface DesktopWindowRendererProps {
   rtcManager: OmniRTCManager | null;
   devicesMap: Y.Map<Device>;
   onFocusClick: (windowId: string) => void;
+  onResize?: (windowId: string, width: number, height: number) => void;
+  onToggleMaximize?: (windowId: string) => void;
+  peerConnection?: RTCPeerConnection | null;
+  onFileDrop?: (targetPeerId: string, file: File) => void;
 }
 
-export const DesktopWindowRenderer: React.FC<DesktopWindowRendererProps> = (props) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  
+export const DesktopWindowRenderer: React.FC<DesktopWindowRendererProps> = React.memo((props) => {
   const inputCaptureListeners = useInputCapture(
     props.localDeviceId,
     props.rtcManager,
     props.windowState,
-    props.devicesMap,
-    containerRef as any
+    props.devicesMap
   );
 
   return (
-    <div ref={containerRef} style={{ display: 'contents' }}>
-      <RemoteWindowRenderer
-        localDeviceId={props.localDeviceId}
-        localDevice={props.localDevice}
-        windowState={props.windowState}
-        stream={props.stream}
-        focusedWindowId={props.focusedWindowId}
-        onDragStart={props.onDragStart}
-        onDrag={props.onDrag}
-        onDragEnd={props.onDragEnd}
-        inputCaptureListeners={inputCaptureListeners}
-        onFocusClick={props.onFocusClick}
-      />
-    </div>
+    <RemoteWindowRenderer
+      localDeviceId={props.localDeviceId}
+      localDevice={props.localDevice}
+      windowState={props.windowState}
+      stream={props.stream}
+      focusedWindowId={props.focusedWindowId}
+      onDragStart={props.onDragStart}
+      onDrag={props.onDrag}
+      onDragEnd={props.onDragEnd}
+      inputCaptureListeners={inputCaptureListeners}
+      onFocusClick={props.onFocusClick}
+      onResize={props.onResize}
+      onToggleMaximize={props.onToggleMaximize}
+      peerConnection={props.peerConnection}
+      onFileDrop={props.onFileDrop}
+    />
   );
-};
+});

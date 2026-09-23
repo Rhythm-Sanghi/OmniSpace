@@ -2,7 +2,12 @@
   "name": "omni-space",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Omni-Space: A Unified, P2P, Cross-Device Window Manager",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "workspaces": [
     "core",
     "ui",
@@ -16,16 +21,26 @@
     "dev:desktop": "npm run dev -w desktop",
     "dev:pwa": "npm run dev -w mobile-pwa",
     "build:all": "npm run build -w signaling-server && npm run build -w desktop && npm run build -w mobile-pwa",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "clean": "node --input-type=module -e \"import fs from 'fs'; ['desktop/dist','mobile-pwa/dist','signaling-server/dist'].forEach(d => fs.rmSync(d, {recursive: true, force: true}))\"",
+    "cargo:check": "cargo check --manifest-path desktop/src-tauri/Cargo.toml",
+    "cargo:clippy": "cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings",
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "concurrently": "^9.1.0",
     "eslint": "^9.17.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^2.1.8"
   }
 }

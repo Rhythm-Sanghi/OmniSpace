@@ -25,6 +25,7 @@ struct TrackingState {
 
 static TRACKING_STATE: Mutex<Option<TrackingState>> = Mutex::new(None);
 static JOIN_HANDLE: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+static CAPTURE_JOIN_HANDLE: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 
 static TARGET_HWND: Mutex<Option<usize>> = Mutex::new(None);
 static TAURI_APP: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
@@ -435,8 +436,11 @@ fn inject_mouse_event(flags: u32, x: i32, y: i32, data: u32) {
     let screen_height = GetSystemMetrics(SM_CYSCREEN);
     if screen_width <= 0 || screen_height <= 0 { return; }
 
-    let normalized_x = (x * 65535) / screen_width;
-    let normalized_y = (y * 65535) / screen_height;
+    let clamped_x = x.clamp(0, screen_width);
+    let clamped_y = y.clamp(0, screen_height);
+
+    let normalized_x = (clamped_x * 65535) / screen_width;
+    let normalized_y = (clamped_y * 65535) / screen_height;
 
     let mut input = INPUT {
       r#type: INPUT_MOUSE,
@@ -769,6 +773,13 @@ fn start_tracking_window(app_handle: tauri::AppHandle, handle: usize) {
 
   #[cfg(target_os = "windows")]
   {
+    unsafe {
+      use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
+      if IsWindow(handle as HWND) == 0 {
+        return;
+      }
+    }
+
     let (tx, rx) = std::sync::mpsc::channel::<(u32, isize)>();
 
     let join_handle = std::thread::spawn(move || {
@@ -905,7 +916,7 @@ fn stop_tracking_window() {
 
   #[cfg(target_os = "linux")]
   {
-    let mut dev_lock = UINPUT_DEVICE.lock().unwrap();
+    let mut dev_lock = UINPUT_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
     *dev_lock = None;
   }
 
@@ -946,8 +957,33 @@ fn stop_tracking_window() {
   }
 }
 
+static INPUT_RATE_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static INPUT_RATE_WINDOW_START: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const MAX_INPUT_EVENTS_PER_SEC: u32 = 300;
+
+fn check_input_rate_limit() -> bool {
+  use std::time::{SystemTime, UNIX_EPOCH};
+  let now = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|d| d.as_millis() as u64)
+    .unwrap_or(0);
+
+  let start = INPUT_RATE_WINDOW_START.load(Ordering::Relaxed);
+  if now.saturating_sub(start) >= 1000 {
+    INPUT_RATE_WINDOW_START.store(now, Ordering::Relaxed);
+    INPUT_RATE_COUNTER.store(1, Ordering::Relaxed);
+    true
+  } else {
+    let count = INPUT_RATE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    count < MAX_INPUT_EVENTS_PER_SEC
+  }
+}
+
 #[tauri::command]
 fn inject_input(event: String) -> Result<(), String> {
+  if !check_input_rate_limit() {
+    return Err("Input injection rate limit exceeded".into());
+  }
   #[cfg(target_os = "windows")]
   {
     if let Ok(parsed) = serde_json::from_str::<InputEventPayload>(&event) {
@@ -1724,12 +1760,8 @@ fn start_macos_capture(window_id: usize) -> Result<(u16, String), String> {
     std::thread::spawn(run_wasapi_loopback);
   }
 
-  // Generate cryptographically secure random session token via /dev/urandom
-  let mut bytes = [0u8; 16];
-  if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
-    file.read_exact(&mut bytes).ok();
-  }
-  let session_token: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+  // Generate cryptographically secure random session token
+  let session_token: String = generate_session_token();
   
   if let Ok(mut lock) = CAPTURE_TOKEN.lock() {
     *lock = Some(session_token.clone());
@@ -1738,7 +1770,9 @@ fn start_macos_capture(window_id: usize) -> Result<(u16, String), String> {
   // Bind TCP listener to dynamic localhost port
   let listener = std::net::TcpListener::bind("127.0.0.1:0")
     .map_err(|e| format!("Failed to bind TCP: {}", e))?;
-  let port = listener.local_addr().unwrap().port();
+  let port = listener.local_addr()
+    .map_err(|e| format!("Failed to get local addr: {}", e))?
+    .port();
 
   if let Ok(mut lock) = CAPTURE_PORT.lock() {
     *lock = Some(port);
@@ -1747,7 +1781,7 @@ fn start_macos_capture(window_id: usize) -> Result<(u16, String), String> {
   listener.set_nonblocking(true).ok();
 
   let token_clone = session_token.clone();
-  std::thread::spawn(move || {
+  let join_handle = std::thread::spawn(move || {
     let mut client_stream = None;
     
     // Non-blocking wait loop for incoming webview HTTP client
@@ -1838,6 +1872,10 @@ fn start_macos_capture(window_id: usize) -> Result<(u16, String), String> {
     }
   });
 
+  if let Ok(mut lock) = CAPTURE_JOIN_HANDLE.lock() {
+    *lock = Some(join_handle);
+  }
+
   Ok((port, session_token))
 }
 
@@ -1847,6 +1885,16 @@ fn stop_macos_capture() {
   #[cfg(target_os = "windows")]
   {
     IS_CAPTURING_AUDIO.store(false, Ordering::SeqCst);
+  }
+  let join_handle = {
+    if let Ok(mut lock) = CAPTURE_JOIN_HANDLE.lock() {
+      lock.take()
+    } else {
+      None
+    }
+  };
+  if let Some(handle) = join_handle {
+    handle.join().ok();
   }
   if let Ok(mut lock) = CAPTURE_PORT.lock() {
     *lock = None;
@@ -1861,6 +1909,12 @@ fn stop_macos_capture() {
 
 fn main() {
   tauri::Builder::default()
+    .on_window_event(|event| {
+      if let tauri::WindowEvent::CloseRequested { .. } = event.event() {
+        stop_tracking_window();
+        stop_macos_capture();
+      }
+    })
     .invoke_handler(tauri::generate_handler![
       enumerate_windows,
       start_tracking_window,
@@ -2208,7 +2262,8 @@ impl UinputDevice {
       }
 
       let mut dev: UinputUserDev = std::mem::zeroed();
-      dev.name[..10].copy_from_slice(b"omni-input\0");
+      let name = b"omni-input\0";
+      dev.name[..name.len()].copy_from_slice(name);
       dev.id = InputId {
         bustype: 0x03, // BUS_USB
         vendor: 0x1234,
@@ -2293,7 +2348,10 @@ fn code_to_linux_keycode(code: &str) -> u16 {
 
 #[cfg(target_os = "linux")]
 fn inject_input_linux(event: &InputEventPayload) -> Result<(), String> {
-  let mut dev_lock = UINPUT_DEVICE.lock().unwrap();
+  static LAST_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
+  static LAST_Y: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
+
+  let mut dev_lock = UINPUT_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
   if dev_lock.is_none() {
     *dev_lock = Some(UinputDevice::new()?);
   }
@@ -2301,17 +2359,17 @@ fn inject_input_linux(event: &InputEventPayload) -> Result<(), String> {
   if let Some(dev) = &mut *dev_lock {
     match event {
       InputEventPayload::Mousemove(p) => {
-        static mut LAST_X: i32 = 0;
-        static mut LAST_Y: i32 = 0;
-        unsafe {
-          if LAST_X == 0 && LAST_Y == 0 {
-            LAST_X = p.x;
-            LAST_Y = p.y;
-          }
-          let dx = p.x - LAST_X;
-          let dy = p.y - LAST_Y;
-          LAST_X = p.x;
-          LAST_Y = p.y;
+        let prev_x = LAST_X.load(Ordering::Relaxed);
+        let prev_y = LAST_Y.load(Ordering::Relaxed);
+
+        if prev_x == i32::MIN && prev_y == i32::MIN {
+          LAST_X.store(p.x, Ordering::Relaxed);
+          LAST_Y.store(p.y, Ordering::Relaxed);
+        } else {
+          let dx = p.x - prev_x;
+          let dy = p.y - prev_y;
+          LAST_X.store(p.x, Ordering::Relaxed);
+          LAST_Y.store(p.y, Ordering::Relaxed);
           if dx != 0 {
             dev.write_event(2, 0, dx); // EV_REL, REL_X
           }
@@ -2946,6 +3004,61 @@ fn stop_uinput_session() {
   }
 }
 
+fn generate_session_token() -> String {
+  let mut bytes = [0u8; 16];
+
+  #[cfg(target_os = "windows")]
+  {
+    use windows_sys::Win32::Security::Cryptography::{
+      CryptAcquireContextW, CryptGenRandom, CryptReleaseContext,
+      PROV_RSA_FULL, CRYPT_VERIFYCONTEXT,
+    };
+    let mut h_prov: usize = 0;
+    let acquired = unsafe {
+      CryptAcquireContextW(
+        &mut h_prov,
+        std::ptr::null(),
+        std::ptr::null(),
+        PROV_RSA_FULL,
+        CRYPT_VERIFYCONTEXT,
+      )
+    };
+    if acquired != 0 && h_prov != 0 {
+      unsafe {
+        CryptGenRandom(h_prov, bytes.len() as u32, bytes.as_mut_ptr());
+        CryptReleaseContext(h_prov, 0);
+      }
+    }
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  {
+    if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
+      file.read_exact(&mut bytes).ok();
+    }
+  }
+
+  // If OS entropy failed or returned all zeros, mix in high-resolution time + ASLR address entropy
+  if bytes.iter().all(|&b| b == 0) {
+    let now = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap_or_default();
+    let nanos = now.as_nanos();
+    let ptr_entropy = &bytes as *const _ as usize as u64;
+    let mix = nanos ^ (ptr_entropy as u128);
+    for (i, b) in mix.to_le_bytes().iter().enumerate() {
+      bytes[i % 16] ^= b;
+      bytes[(i + 7) % 16] = bytes[(i + 7) % 16].wrapping_add(*b);
+    }
+    // Guarantee non-zero
+    if bytes.iter().all(|&b| b == 0) {
+      bytes[0] = 0x42;
+    }
+  }
+
+  bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -2960,5 +3073,17 @@ mod tests {
     let get_res = get_clipboard_text();
     assert!(get_res.is_ok(), "Failed to get clipboard: {:?}", get_res);
     assert_eq!(get_res.unwrap(), test_str);
+  }
+
+  #[test]
+  fn test_generate_session_token_not_zero() {
+    let token = generate_session_token();
+    assert_eq!(token.len(), 32);
+    assert_ne!(token, "00000000000000000000000000000000");
+
+    let token2 = generate_session_token();
+    assert_eq!(token2.len(), 32);
+    assert_ne!(token2, "00000000000000000000000000000000");
+    assert_ne!(token, token2, "Subsequent tokens must be unique and non-deterministic");
   }
 }

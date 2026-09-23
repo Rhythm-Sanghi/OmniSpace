@@ -62,6 +62,8 @@ class MockRTCPeerConnection {
     return { type: 'answer', sdp: 'sdp' };
   }
 
+  public candidates: any[] = [];
+
   async setLocalDescription(_desc: any) {
     this.localDescription = _desc;
   }
@@ -70,7 +72,9 @@ class MockRTCPeerConnection {
     this.remoteDescription = _desc;
   }
 
-  addIceCandidate(_cand: any) {}
+  async addIceCandidate(_cand: any) {
+    this.candidates.push(_cand);
+  }
 
   close() {}
 }
@@ -82,6 +86,8 @@ describe('OmniRTCManager Transport Orchestration', () => {
   beforeEach(() => {
     vi.stubGlobal('WebSocket', MockWebSocket);
     vi.stubGlobal('RTCPeerConnection', MockRTCPeerConnection);
+    vi.stubGlobal('RTCSessionDescription', class { constructor(public init: any) { Object.assign(this, init); } });
+    vi.stubGlobal('RTCIceCandidate', class { constructor(public init: any) { Object.assign(this, init); } });
     vi.useFakeTimers();
 
     doc = new Y.Doc();
@@ -289,4 +295,69 @@ describe('OmniRTCManager Transport Orchestration', () => {
 
     manager.destroy();
   });
+
+  it('buffers ICE candidates arriving before remoteDescription and flushes them after', async () => {
+    const manager = new OmniRTCManager(
+      'peer-A',
+      'desktop',
+      '123456',
+      'ws://localhost:3000',
+      doc,
+      awareness
+    );
+
+    manager.connect();
+    vi.advanceTimersByTime(20);
+
+    const socketInstance = (manager as any).ws;
+
+    // Room roster with peer-B prompts initiateConnection('peer-B')
+    socketInstance.onmessage({
+      data: JSON.stringify({
+        type: 'room-roster',
+        senderPeerId: 'server',
+        payload: { peers: ['peer-A', 'peer-B'] },
+      }),
+    });
+    vi.advanceTimersByTime(20);
+
+    const peerState = (manager as any).peerConnections.get('peer-B');
+    expect(peerState).toBeDefined();
+    expect(peerState.pc.remoteDescription).toBeNull();
+
+    // Early ICE candidate arrives before answer/remoteDescription
+    const earlyCandidate = { candidate: 'candidate:1 1 UDP 2130706431 192.168.1.1 5000 typ host', sdpMid: '0', sdpMLineIndex: 0 };
+    socketInstance.onmessage({
+      data: JSON.stringify({
+        type: 'ice-candidate',
+        senderPeerId: 'peer-B',
+        payload: { candidate: earlyCandidate },
+      }),
+    });
+
+    // Candidate must be in queue and not yet added to RTCPeerConnection
+    expect(peerState.candidateQueue.length).toBe(1);
+    expect(peerState.pc.candidates.length).toBe(0);
+
+    // Answer arrives from peer-B, applying remoteDescription and triggering flush
+    await socketInstance.onmessage({
+      data: JSON.stringify({
+        type: 'answer',
+        senderPeerId: 'peer-B',
+        payload: { answer: { type: 'answer', sdp: 'test-sdp-answer' } },
+      }),
+    });
+
+    // Let microtasks run
+    await Promise.resolve();
+    vi.advanceTimersByTime(10);
+
+    // Candidate queue should now be empty and candidate applied to RTCPeerConnection
+    expect(peerState.candidateQueue.length).toBe(0);
+    expect(peerState.pc.candidates.length).toBe(1);
+    expect(peerState.pc.candidates[0].candidate).toBe(earlyCandidate.candidate);
+
+    manager.destroy();
+  });
 });
+

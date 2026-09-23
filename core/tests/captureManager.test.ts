@@ -12,8 +12,7 @@ describe('OmniCaptureManager', () => {
     if (originalNavigatorDescriptor) {
       Object.defineProperty(global, 'navigator', originalNavigatorDescriptor);
     } else {
-      // @ts-ignore
-      delete global.navigator;
+      delete (global as any).navigator;
     }
   });
 
@@ -154,34 +153,35 @@ describe('OmniCaptureManager', () => {
     const originalImage = (global as any).Image;
     (global as any).Image = vi.fn().mockImplementation(() => mockImageInstance);
 
-    vi.useFakeTimers();
+    try {
+      vi.useFakeTimers();
+      const manager = new OmniCaptureManager();
+      const onEndedSpy = vi.fn();
 
-    const manager = new OmniCaptureManager();
-    const onEndedSpy = vi.fn();
+      const stream = await manager.startWindowCapture('win-macos', onEndedSpy, 9999);
 
-    const stream = await manager.startWindowCapture('win-macos', onEndedSpy, 9999);
+      expect(mockInvoke).toHaveBeenCalledWith('start_macos_capture', { windowId: 9999 });
+      expect(mockImageInstance.src).toBe('http://127.0.0.1:8080/stream?token=mock-token-abc');
+      expect(mockCanvas.captureStream).toHaveBeenCalledWith(30);
+      expect(stream).toBe(mockStream);
 
-    expect(mockInvoke).toHaveBeenCalledWith('start_macos_capture', { windowId: 9999 });
-    expect(mockImageInstance.src).toBe('http://127.0.0.1:8080/stream?token=mock-token-abc');
-    expect(mockCanvas.captureStream).toHaveBeenCalledWith(30);
-    expect(stream).toBe(mockStream);
+      // Advance by 33ms to trigger the drawInterval
+      vi.advanceTimersByTime(33);
+      expect(mockCanvas.width).toBe(1024);
+      expect(mockCanvas.height).toBe(768);
+      expect(mockCtx.drawImage).toHaveBeenCalledWith(mockImageInstance, 0, 0);
 
-    // Advance by 33ms to trigger the drawInterval
-    vi.advanceTimersByTime(33);
-    expect(mockCanvas.width).toBe(1024);
-    expect(mockCanvas.height).toBe(768);
-    expect(mockCtx.drawImage).toHaveBeenCalledWith(mockImageInstance, 0, 0);
-
-    // Stop capture and verify cleanup
-    manager.stopWindowCapture('win-macos');
-    expect(mockImageInstance.src).toBe('');
-    expect(mockInvoke).toHaveBeenCalledWith('stop_macos_capture');
-    expect(trackStopSpy).toHaveBeenCalled();
-
-    // Restore global definitions
-    (global as any).document = originalDocument;
-    (global as any).Image = originalImage;
-    (global as any).window = originalWindow;
-    vi.useRealTimers();
+      // Stop capture and verify cleanup
+      manager.stopWindowCapture('win-macos');
+      expect(mockImageInstance.src).toBe('');
+      expect(mockInvoke).toHaveBeenCalledWith('stop_macos_capture', { windowId: 'win-macos', port: 8080 });
+      expect(trackStopSpy).toHaveBeenCalled();
+    } finally {
+      // Restore global definitions
+      (global as any).document = originalDocument;
+      (global as any).Image = originalImage;
+      (global as any).window = originalWindow;
+      vi.useRealTimers();
+    }
   });
 });

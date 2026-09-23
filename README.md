@@ -13,11 +13,31 @@ OmniSpace is a unified, peer-to-peer (P2P), cross-device window and workspace ma
 
 ## System Architecture
 
-The application is split into four packages:
-1. **core**: Shared TypeScript library containing state models (Yjs), WebRTC connection logic, mouse/keyboard input translation layer, and media transport controllers.
-2. **ui**: Shared React components for rendering remote workspaces, pointer overlays, and window bounding boxes.
+## System Architecture
+
+The application is split into five workspaces:
+1. **core**: Shared TypeScript library containing state models (Yjs CRDTs), WebRTC connection logic, mouse/keyboard input translation layer, frame streaming hooks, and adaptive quality controllers.
+2. **ui**: Shared React components for rendering remote workspaces, pointer overlays, error boundaries, and window bounding boxes.
 3. **desktop**: Tauri desktop application written in Rust and React. Runs natively on Windows, macOS, and Linux to capture windows, inject input, and manage system clipboard.
-4. **signaling-server**: Lightweight Node.js WebSocket coordination server to broker room joins and coordinate initial WebRTC handshakes.
+4. **mobile-pwa**: Vite + React Progressive Web App (PWA) companion client designed for mobile touch devices and secondary screens.
+5. **signaling-server**: Lightweight, hardened Node.js WebSocket coordination server to broker room joins, authenticate peer reconnects, and relay WebRTC ICE/TURN credentials.
+
+## Environment Variables
+
+### Signaling Server (`signaling-server`)
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3000` | Port for the HTTP and WebSocket server. |
+| `NODE_ENV` | `development` | Setting to `production` enforces strict CSWSH origin validation. |
+| `TRUST_PROXY` | `false` | Set to `true` when behind a reverse proxy (e.g. Render, Cloudflare) to use trusted client IP headers. |
+| `ALLOWED_ORIGINS` | `*` in dev | Comma-separated list of allowed origins for WebSocket connections in production. |
+| `METERED_TURN_API_KEY` | None | Metered TURN API key for relaying dynamic TURN credentials via `GET /api/turn-credentials`. |
+| `METRICS_TOKEN` | None | Optional Bearer token for accessing `GET /metrics` remotely. |
+
+### Frontend Clients (`desktop`, `mobile-pwa`)
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_SIGNALING_URL` | `ws://localhost:3000` | WebSocket URL of the signaling server. |
 
 ## Getting Started
 
@@ -46,26 +66,22 @@ npm run dev:all
 
 ## Deployment Guide
 
-### 1. Deploy the Signaling Server (Free and Card-Free)
+### 1. Deploy the Signaling Server
 
-#### Option A: Hugging Face Spaces (Gradio)
-Hugging Face offers free, 24/7 hosting for Python Gradio templates with no credit card required.
-1. Create a free Space on Hugging Face using the Gradio SDK.
-2. Add a `requirements.txt` file:
-   ```text
-   fastapi
-   uvicorn
-   gradio
-   ```
-3. Add an `app.py` file containing the FastAPI WebSocket server script (refer to the documentation inside `signaling-server/README.md` or deploy directly).
-4. Retrieve your secure WebSocket URL: `wss://<username>-<space-name>.hf.space/ws`.
+The signaling server is a standard Node.js server. It can be deployed to any platform supporting Node.js or Docker (such as Render, Railway, Fly.io, or AWS).
 
-#### Option B: Render.com
-Render is a free web hosting platform that does not require credit card details.
-1. Create a free account on Render.
-2. Connect your GitHub repository.
-3. Set the Root Directory to `signaling-server`.
-4. Configure Build Command: `npm install && npm run build` and Start Command: `node dist/index.js`.
+#### Render.com
+1. Create a Web Service on Render connected to your repository.
+2. Set **Root Directory** to `signaling-server`.
+3. Set **Build Command** to `npm install && npm run build`.
+4. Set **Start Command** to `node dist/index.js`.
+5. Set **Health Check Path** to `/health`.
+6. Configure Environment Variables:
+   - `PORT`: Provided automatically by Render.
+   - `NODE_ENV`: `production`.
+   - `TRUST_PROXY`: `true`.
+   - `ALLOWED_ORIGINS`: Your frontend domain(s) (e.g., `https://your-pwa.pages.dev`).
+   - `METERED_TURN_API_KEY`: Your Metered TURN API key (optional).
 
 ### 2. Deploy the Mobile PWA Client
 Host the static React client on a global edge CDN (such as Cloudflare Pages or Vercel) for free.

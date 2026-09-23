@@ -3,7 +3,8 @@
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
     "devPath": "http://localhost:5173",
-    "distDir": "../dist"
+    "distDir": "../dist",
+    "withGlobalTauri": false
   },
   "package": {
     "productName": "omni-space",
@@ -11,7 +12,18 @@
   },
   "tauri": {
     "allowlist": {
-      "all": true
+      "all": false,
+      "clipboard": {
+        "all": false,
+        "readText": true,
+        "writeText": true
+      },
+      "event": {
+        "all": true
+      },
+      "window": {
+        "all": true
+      }
     },
     "bundle": {
       "active": true,
@@ -26,12 +38,15 @@
       ]
     },
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:;",
+      "freezePrototype": true
     },
     "windows": [
       {
         "fullscreen": false,
         "height": 600,
+        "minHeight": 500,
+        "minWidth": 800,
         "resizable": true,
         "title": "Omni-Space Desk Manager",
         "width": 1100

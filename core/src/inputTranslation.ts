@@ -53,14 +53,20 @@ export function translateToRealCoordinates(
   const clickX = videoSpaceClick.x - offsetX;
   const clickY = videoSpaceClick.y - offsetY;
 
-  // If click lands in the letterbox/pillarbox padding, discard it
-  if (clickX < 0 || clickX > activeWidth || clickY < 0 || clickY > activeHeight) {
+  // If click lands in the letterbox/pillarbox padding, discard it (allowing subpixel edge tolerance)
+  const tolerance = 0.5;
+  if (
+    clickX < -tolerance ||
+    clickX > activeWidth + tolerance ||
+    clickY < -tolerance ||
+    clickY > activeHeight + tolerance
+  ) {
     return null;
   }
 
-  // Map to normalized 0-1 fraction
-  const fracX = clickX / activeWidth;
-  const fracY = clickY / activeHeight;
+  // Map to normalized 0-1 fraction clamped to [0, 1]
+  const fracX = Math.max(0, Math.min(1, clickX / activeWidth));
+  const fracY = Math.max(0, Math.min(1, clickY / activeHeight));
 
   // Map fraction to source window logical CSS space
   const winLocalCssX = fracX * sourceWindowRect.width;

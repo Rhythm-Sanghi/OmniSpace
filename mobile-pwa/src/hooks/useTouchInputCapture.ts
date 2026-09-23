@@ -13,15 +13,16 @@ export function useTouchInputCapture(
   rtcManager: OmniRTCManager | null,
   windowState: WindowInstance,
   devicesMap: Y.Map<Device>,
-  containerRef: React.RefObject<HTMLDivElement | null>
+  containerRef?: React.RefObject<HTMLDivElement | null>
 ) {
   const lastMouseMoveTimeRef = useRef<number>(0);
 
   const handleTouch = (type: 'mousedown' | 'mousemove' | 'mouseup', e: React.TouchEvent) => {
-    if (!rtcManager || !containerRef.current) return;
+    if (!rtcManager) return;
     if (windowState.capturingDeviceId === localDeviceId) return; // Ignore if self-captured
 
-    const container = containerRef.current;
+    const container = containerRef?.current || (e.currentTarget as HTMLDivElement);
+    if (!container) return;
     const rect = container.getBoundingClientRect();
     const touch = e.touches[0] || e.changedTouches[0];
     if (!touch) return;
