@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "yjs": "^13.6.20",
+    "yjs": "^13.6.32",
     "y-protocols": "^1.0.6"
   }
 }
