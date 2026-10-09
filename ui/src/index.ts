@@ -1,5 +1,5 @@
 export * from './CursorOverlay.js';
-export * from './MockOSWindow.js';
+export * from './demo/MockOSWindow.js';
 export * from './RemoteWindowRenderer.js';
 export * from './ErrorBoundary.js';
 export * from './useWindowHandoff.js';

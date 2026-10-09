@@ -1,26 +1,35 @@
 # OmniSpace
 
-OmniSpace is a unified, peer-to-peer (P2P), cross-device window and workspace management system. It allows developers and power users to extend their desktop workspace onto auxiliary devices, such as tablets, phones, or other computers, using standard web technologies.
+A cross-device workspace prototype with WebRTC screen streaming, shared window
+state, input forwarding and clipboard synchronization. It includes a Tauri
+desktop client, a mobile browser client and a WebSocket signaling server.
 
-## Features
+## Current scope
 
-- **P2P Screen Sharing**: Stream desktop applications or monitors in real-time to remote viewports using low-latency WebRTC connections.
-- **Input Redirection**: Forward mouse and keyboard events from remote devices to control the host desktop manager natively.
-- **Dynamic Workspaces**: Reposition and hand off windows between connected devices.
-- **Unified Clipboard Sync**: Keep local clipboard text and binary images synchronized automatically across all paired environments.
-- **Focus-Follows-Cursor**: Automatically focus native desktop windows when the mouse cursor enters the remote viewport.
-- **Hardware-Accelerated SDP**: Prioritizes H.264, H.265, and AV1 video codec negotiation profiles for optimal hardware performance.
+| Feature | Implementation | Qualification |
+|---|---|---|
+| Peer connections and shared state | WebRTC and Yjs in `core/` | Automated integration tests; real-network conditions vary |
+| Native capture, input and clipboard | Platform-specific Rust code in `desktop/src-tauri/` | Needs device/OS-specific qualification; source presence is not a tested support claim |
+| Mobile companion | React PWA | Browser permissions and capabilities apply |
+| Workspace simulator | Demo windows and synthetic bounds | Exercises layout/handoffs; does not capture native application windows |
+| Preferred video codecs | SDP codec ordering | Negotiation does not guarantee hardware encoding or a particular latency |
 
-## System Architecture
+The Windows, macOS and Linux code paths need separate native checks before
+claiming a feature works on all three platforms. This repository's automated
+mock/in-process tests do not establish physical-device interoperability.
 
-## System Architecture
+## Workspaces
 
-The application is split into five workspaces:
-1. **core**: Shared TypeScript library containing state models (Yjs CRDTs), WebRTC connection logic, mouse/keyboard input translation layer, frame streaming hooks, and adaptive quality controllers.
-2. **ui**: Shared React components for rendering remote workspaces, pointer overlays, error boundaries, and window bounding boxes.
-3. **desktop**: Tauri desktop application written in Rust and React. Runs natively on Windows, macOS, and Linux to capture windows, inject input, and manage system clipboard.
-4. **mobile-pwa**: Vite + React Progressive Web App (PWA) companion client designed for mobile touch devices and secondary screens.
-5. **signaling-server**: Lightweight, hardened Node.js WebSocket coordination server to broker room joins, authenticate peer reconnects, and relay WebRTC ICE/TURN credentials.
+- `core/`: connection logic, shared state, capture coordination and input protocol.
+- `ui/`: shared components, with simulated-window content under `src/demo/`.
+- `desktop/`: React UI and Tauri native integration.
+- `mobile-pwa/`: touch-oriented companion client.
+- `signaling-server/`: room coordination and WebRTC connection setup.
+
+`npm run dev:all` starts the web development servers. To exercise native desktop
+APIs, run `npm run dev:tauri -w desktop` instead of relying on a browser-only
+desktop preview. Pairing and the workspace simulator can still be demonstrated
+without claiming that a simulated window is a captured native window.
 
 ## Environment Variables
 
@@ -52,7 +61,7 @@ The application is split into five workspaces:
 
 Clone the repository and install workspace dependencies:
 ```bash
-npm install
+npm ci
 ```
 
 ### Running Locally
