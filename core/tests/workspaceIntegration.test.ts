@@ -19,7 +19,7 @@ import {
   InputEventEnvelope,
 } from '../src/index.js';
 
-describe('Omni-Space Full Feature Live Verification', () => {
+describe('Workspace integration with in-process peers', () => {
   const ROOM_PIN = '482910';
   const HOST_DEVICE_ID = 'laptop-host-x64';
   const MOBILE_DEVICE_ID = 'mobile-companion-pwa';
@@ -240,7 +240,7 @@ describe('Omni-Space Full Feature Live Verification', () => {
   // --------------------------------------------------------------------------
   // FEATURE 4: Cross-Device Real-Time Clipboard Synchronization
   // --------------------------------------------------------------------------
-  it('Feature 4: Synchronizes clipboard content seamlessly between Laptop and Mobile', async () => {
+  it('Feature 4: Replicates clipboard content between in-process peers', async () => {
     let hostLocalClipboard = '';
     let mobileLocalClipboard = '';
 

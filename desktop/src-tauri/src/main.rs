@@ -2,7 +2,9 @@
   all(not(debug_assertions), target_os = "windows"),
   windows_subsystem = "windows"
 )]
-#![allow(unused_imports, unused_variables, dead_code, clippy::all)]
+// Native branches share declarations across targets. Retain the unused-code
+// exceptions until those branches are split into target-specific modules.
+#![allow(unused_imports, unused_variables, dead_code)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -130,6 +132,8 @@ use windows_sys::Win32::Media::Audio::{
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
+// COM ABI field names follow the Windows interfaces.
+#[allow(non_snake_case)]
 struct IMMDeviceEnumerator_Vtbl {
   QueryInterface: usize,
   AddRef: usize,
@@ -145,6 +149,8 @@ struct IMMDeviceEnumerator_Vtbl {
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
+// COM ABI field names follow the Windows interfaces.
+#[allow(non_snake_case)]
 struct IMMDevice_Vtbl {
   QueryInterface: usize,
   AddRef: usize,
@@ -160,6 +166,8 @@ struct IMMDevice_Vtbl {
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
+// COM ABI field names follow the Windows interfaces.
+#[allow(non_snake_case)]
 struct IAudioClient_Vtbl {
   QueryInterface: usize,
   AddRef: usize,
@@ -195,6 +203,8 @@ struct IAudioClient_Vtbl {
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
+// COM ABI field names follow the Windows interfaces.
+#[allow(non_snake_case)]
 struct IAudioCaptureClient_Vtbl {
   QueryInterface: usize,
   AddRef: usize,
@@ -224,9 +234,13 @@ use windows_sys::Win32::Graphics::Gdi::BITMAPINFOHEADER;
 const CLSCTX_ALL: u32 = 23;
 
 #[cfg(target_os = "windows")]
+// Keep the identifier used by the Windows API documentation.
+#[allow(non_upper_case_globals)]
 const eRender: i32 = 0;
 
 #[cfg(target_os = "windows")]
+// Keep the identifier used by the Windows API documentation.
+#[allow(non_upper_case_globals)]
 const eConsole: i32 = 0;
 
 #[cfg(target_os = "windows")]
@@ -236,6 +250,8 @@ const AUDCLNT_SHAREMODE_SHARED: i32 = 0;
 const AUDCLNT_STREAMFLAGS_LOOPBACK: u32 = 0x00020000;
 
 #[cfg(target_os = "windows")]
+// Keep the identifier used by the Windows API documentation.
+#[allow(non_upper_case_globals)]
 const CLSID_MMDeviceEnumerator: windows_sys::core::GUID = windows_sys::core::GUID {
   data1: 0xBCDE0395,
   data2: 0xE52F,
@@ -244,6 +260,8 @@ const CLSID_MMDeviceEnumerator: windows_sys::core::GUID = windows_sys::core::GUI
 };
 
 #[cfg(target_os = "windows")]
+// Keep the identifier used by the Windows API documentation.
+#[allow(non_upper_case_globals)]
 const IID_IMMDeviceEnumerator: windows_sys::core::GUID = windows_sys::core::GUID {
   data1: 0xA95664D2,
   data2: 0x9614,
@@ -252,6 +270,8 @@ const IID_IMMDeviceEnumerator: windows_sys::core::GUID = windows_sys::core::GUID
 };
 
 #[cfg(target_os = "windows")]
+// Keep the identifier used by the Windows API documentation.
+#[allow(non_upper_case_globals)]
 const IID_IAudioClient: windows_sys::core::GUID = windows_sys::core::GUID {
   data1: 0x1CB9AD4C,
   data2: 0xDBFA,
@@ -260,6 +280,8 @@ const IID_IAudioClient: windows_sys::core::GUID = windows_sys::core::GUID {
 };
 
 #[cfg(target_os = "windows")]
+// Keep the identifier used by the Windows API documentation.
+#[allow(non_upper_case_globals)]
 const IID_IAudioCaptureClient: windows_sys::core::GUID = windows_sys::core::GUID {
   data1: 0xC8ADBD64,
   data2: 0xE71E,
@@ -457,7 +479,7 @@ fn inject_mouse_event(flags: u32, x: i32, y: i32, data: u32) {
       dwExtraInfo: 0,
     };
 
-    SendInput(1, &mut input, std::mem::size_of::<INPUT>() as i32);
+    SendInput(1, &input, std::mem::size_of::<INPUT>() as i32);
   }
 }
 
@@ -488,7 +510,7 @@ fn inject_key_event(code: &str, is_up: bool) {
       dwExtraInfo: 0,
     };
 
-    SendInput(1, &mut input, std::mem::size_of::<INPUT>() as i32);
+    SendInput(1, &input, std::mem::size_of::<INPUT>() as i32);
   }
 }
 
@@ -502,7 +524,7 @@ fn inject_scroll_event(x: i32, y: i32, _delta_x: f64, delta_y: f64) {
 
 fn base64_encode(bytes: &[u8]) -> String {
   const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  let mut result = String::with_capacity((bytes.len() + 2) / 3 * 4);
+  let mut result = String::with_capacity(bytes.len().div_ceil(3) * 4);
   let mut i = 0;
   while i < bytes.len() {
     let b0 = bytes[i] as usize;
@@ -533,7 +555,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 
 fn base64_decode(s: &str) -> Option<Vec<u8>> {
   let s = s.trim();
-  if s.len() % 4 != 0 {
+  if !s.len().is_multiple_of(4) {
     return None;
   }
   let mut result = Vec::with_capacity(s.len() / 4 * 3);
@@ -624,9 +646,9 @@ fn get_clipboard_text() -> Result<String, String> {
       let header_size = header.biSize as usize;
       let image_size = if header.biSizeImage == 0 {
         let width = header.biWidth as usize;
-        let height = header.biHeight.abs() as usize;
+        let height = header.biHeight.unsigned_abs() as usize;
         let bpp = header.biBitCount as usize;
-        let row_stride = ((width * bpp + 31) / 32) * 4;
+        let row_stride = (width * bpp).div_ceil(32) * 4;
         row_stride * height
       } else {
         header.biSizeImage as usize
@@ -1825,10 +1847,8 @@ fn start_macos_capture(window_id: usize) -> Result<(u16, String), String> {
                   Vec::new()
                 }
               };
-              if !samples.is_empty() {
-                if stream.write_all(&samples).is_err() {
-                  break;
-                }
+              if !samples.is_empty() && stream.write_all(&samples).is_err() {
+                break;
               }
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -2833,7 +2853,7 @@ fn run_wasapi_loopback() {
       std::ptr::null_mut(),
       CLSCTX_ALL,
       &IID_IMMDeviceEnumerator,
-      &mut enumerator as *mut IMMDeviceEnumerator as *mut *mut std::ffi::c_void
+      &mut enumerator as *mut IMMDeviceEnumerator
     ) < 0 {
       return;
     }
@@ -2853,7 +2873,7 @@ fn run_wasapi_loopback() {
       &IID_IAudioClient,
       CLSCTX_ALL,
       std::ptr::null_mut(),
-      &mut audio_client as *mut IAudioClient as *mut *mut std::ffi::c_void
+      &mut audio_client as *mut IAudioClient
     ) < 0 {
       let vtbl_dev = *(device as *mut *const IMMDevice_Vtbl);
       let vtbl_enum = *(enumerator as *mut *const IMMDeviceEnumerator_Vtbl);
@@ -2901,7 +2921,7 @@ fn run_wasapi_loopback() {
     if ((*vtbl).GetService)(
       audio_client,
       &IID_IAudioCaptureClient,
-      &mut capture_client as *mut IAudioCaptureClient as *mut *mut std::ffi::c_void
+      &mut capture_client as *mut IAudioCaptureClient
     ) < 0 {
       let vtbl_client = *(audio_client as *mut *const IAudioClient_Vtbl);
       let vtbl_dev = *(device as *mut *const IMMDevice_Vtbl);
