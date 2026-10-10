@@ -851,7 +851,7 @@ export class OmniRTCManager {
       } else {
         // Create new
         let initialX = 0;
-        let initialY = 0;
+        const initialY = 0;
         const otherDevices = Array.from(devicesMap.values()).filter(
           (d) => d.id !== this.localDeviceId && d.status === 'connected'
         );

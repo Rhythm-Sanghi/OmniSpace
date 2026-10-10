@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import console from 'node:console';
 
 console.log('[build-pages] Building mobile-pwa production bundle...');
 execSync('npm run build -w mobile-pwa', { stdio: 'inherit' });
