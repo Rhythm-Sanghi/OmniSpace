@@ -19,7 +19,7 @@
     "react-dom": "^19.0.0",
     "qrcode": "^1.5.4",
     "ui": "*",
-    "yjs": "^13.6.20"
+    "yjs": "^13.6.32"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.6.0",
