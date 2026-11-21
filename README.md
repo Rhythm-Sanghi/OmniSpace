@@ -1,17 +1,17 @@
 # OmniSpace
 
-OmniSpace is a unified, peer-to-peer (P2P), cross-device window and workspace management system. It allows developers and power users to extend their desktop workspace onto auxiliary devices, such as tablets, phones, or other computers, using standard web technologies.
+OmniSpace shares a desktop window or display with another device over WebRTC. A phone or tablet joins through the web client. The desktop app also includes input forwarding and clipboard sync for paired devices.
 
-## Features
+## Run locally
 
-- **P2P Screen Sharing**: Stream desktop applications or monitors in real-time to remote viewports using low-latency WebRTC connections.
-- **Input Redirection**: Forward mouse and keyboard events from remote devices to control the host desktop manager natively.
-- **Dynamic Workspaces**: Reposition and hand off windows between connected devices.
-- **Unified Clipboard Sync**: Keep local clipboard text and binary images synchronized automatically across all paired environments.
-- **Focus-Follows-Cursor**: Automatically focus native desktop windows when the mouse cursor enters the remote viewport.
-- **Hardware-Accelerated SDP**: Prioritizes H.264, H.265, and AV1 video codec negotiation profiles for optimal hardware performance.
+Install Node.js 20 or newer, the stable Rust toolchain, and the [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system. From the repository root:
 
-## System Architecture
+```sh
+npm ci
+npm run dev:all
+```
+
+This starts the signaling server, the Tauri host, and the mobile web client.
 
 ## System Architecture
 
@@ -38,31 +38,6 @@ The application is split into five workspaces:
 | Variable | Default | Description |
 |---|---|---|
 | `VITE_SIGNALING_URL` | `ws://localhost:3000` | WebSocket URL of the signaling server. |
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js (version 20 or higher)
-- Rust toolchain (stable)
-- OS-specific build dependencies:
-  - **Linux (Debian/Ubuntu)**: `sudo apt-get install libx11-dev libxtst-dev libudev-dev libgtk-3-dev libwebkit2gtk-4.0-dev`
-
-### Installation
-
-Clone the repository and install workspace dependencies:
-```bash
-npm install
-```
-
-### Running Locally
-
-To run the signaling server, desktop app, and mobile PWA concurrently in development mode:
-```bash
-npm run dev:all
-```
-
----
 
 ## Deployment Guide
 
